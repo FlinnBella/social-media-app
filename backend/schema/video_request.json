@@ -50,6 +50,7 @@
     },
     "tts_config": {
       "type": "object",
+      "service": "ElevenLabs",
       "properties": {
         "script": {
           "type": "string",
