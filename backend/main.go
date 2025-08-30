@@ -1,150 +1,190 @@
-package main
+import React, { useState, useRef } from 'react';
+import { Send, Upload, Camera, Video, Image, Instagram, Twitter, Facebook } from 'lucide-react';
 
-import (
-	"bytes"
-	"encoding/json"
-	"fmt"
-	"io"
-	"mime/multipart"
-	"net/http"
-	"time"
-
-	"github.com/gin-contrib/cors"
-	"github.com/gin-gonic/gin"
-)
-
-type VideoRequest struct {
-	Prompt string `json:"prompt"`
+interface Message {
+  id: string;
+  type: 'user' | 'assistant';
+  content: string;
+  timestamp: Date;
+  videoUrl?: string;
+  socialLinks?: {
+    instagram: string;
+    tiktok: string;
+    twitter: string;
+    facebook: string;
+  };
 }
 
-type VideoResponse struct {
-	VideoURL string `json:"videoUrl"`
-	Error    string `json:"error,omitempty"`
+function App() {
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [inputText, setInputText] = useState('');
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const cameraInputRef = useRef<HTMLInputElement>(null);
+
+  const handleFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (file && (file.type.startsWith('image/') || file.type.startsWith('video/'))) {
+      setSelectedFile(file);
+    }
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    
+    if (!inputText.trim() && !selectedFile) return;
+
+    const userMessage: Message = {
+      id: Date.now().toString(),
+      type: 'user',
+      content: inputText || 'Uploaded media',
+      timestamp: new Date(),
+    };
+
+    setMessages(prev => [...prev, userMessage]);
+    setIsLoading(true);
+
+    try {
+      const formData = new FormData();
+      formData.append('prompt', inputText);
+      if (selectedFile) {
+        formData.append('file', selectedFile);
+      }
+
+      const response = await fetch('http://localhost:8080/api/generate-video', {
+        method: 'POST',
+        body: formData,
+      });
+
+      const result = await response.json();
+
+      if (response.ok) {
+        const assistantMessage: Message = {
+          id: (Date.now() + 1).toString(),
+          type: 'assistant',
+          content: 'Your video has been generated! You can now share it on your favorite social media platforms.',
+          timestamp: new Date(),
+          videoUrl: result.videoUrl,
+          socialLinks: {
+            instagram: `https://www.instagram.com/create/story/`,
+            tiktok: `https://www.tiktok.com/upload/`,
+            twitter: `https://twitter.com/compose/tweet`,
+            facebook: `https://www.facebook.com/`,
+          },
+        };
+        setMessages(prev => [...prev, assistantMessage]);
+      } else {
+        throw new Error(result.error || 'Failed to generate video');
+      }
+    } catch (error) {
+      const errorMessage: Message = {
+        id: (Date.now() + 1).toString(),
+        type: 'assistant',
+        content: `Sorry, there was an error generating your video: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        timestamp: new Date(),
+      };
+      setMessages(prev => [...prev, errorMessage]);
+    } finally {
+      setIsLoading(false);
+      setInputText('');
+      setSelectedFile(null);
+      if (fileInputRef.current) fileInputRef.current.value = '';
+      if (cameraInputRef.current) cameraInputRef.current.value = '';
+    }
+  };
+
+  return (
+    <div className="min-h-screen bg-gradient-to-b from-pink-200 to-white flex flex-col items-center justify-center p-8">
+      {/* Title */}
+      <h1 className="font-ibm text-4xl font-bold text-gray-800 mb-8 text-center">
+        Social Media Content Maker
+      </h1>
+      
+      <div className="flex flex-col items-center gap-8 max-w-md w-full">
+        
+        {/* iPhone 15 Frame */}
+        <div className="relative mb-4">
+          <div className="w-80 h-[640px] bg-black rounded-[3rem] p-2 shadow-2xl">
+            <div className="w-full h-full bg-white rounded-[2.5rem] relative overflow-hidden">
+              {/* Dynamic Island */}
+              <div className="absolute top-6 left-1/2 transform -translate-x-1/2 w-32 h-8 bg-black rounded-full z-10"></div>
+              
+              {/* Video Display Area */}
+              <div className="w-full h-full flex items-center justify-center bg-gray-50">
+                {messages.length > 0 && messages[messages.length - 1].videoUrl ? (
+                  <video 
+                    src={messages[messages.length - 1].videoUrl} 
+                    controls 
+                    className="w-full h-full object-cover"
+                    autoPlay
+                    muted
+                    loop
+                  />
+                ) : (
+                  <div className="text-center text-gray-400 p-8">
+                    <Video className="w-16 h-16 mx-auto mb-4 opacity-50" />
+                    <p className="text-sm">Your AI-generated video will appear here</p>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+
+                    className="hidden"
+                  />
+                  
+                  <button
+                    type="button"
+                    onClick={() => fileInputRef.current?.click()}
+                    className="flex items-center space-x-1 px-3 py-2 text-sm text-gray-600 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors font-ibm"
+                  >
+                    <Upload className="w-4 h-4" />
+                    <span>Upload</span>
+                  </button>
+                  
+                  <button
+                    type="button"
+                    onClick={() => cameraInputRef.current?.click()}
+                    className="flex items-center space-x-1 px-3 py-2 text-sm text-gray-600 border border-gray-300 rounded-lg hover:bg-gray-50 transition-colors font-ibm"
+                  >
+                    <Camera className="w-4 h-4" />
+                    <span>Camera</span>
+                  </button>
+                </div>
+              </form>
+            </div>
+            
+            {/* Social Media Links - Show after video generation */}
+            {messages.length > 0 && messages[messages.length - 1].videoUrl && (
+              <div className="border-t border-gray-200 p-4">
+                <p className="text-sm text-gray-600 mb-3 font-ibm text-center">Share your video:</p>
+                <div className="flex justify-center gap-3">
+                  <a href="https://www.instagram.com/create/story/" target="_blank" rel="noopener noreferrer" 
+                     className="p-3 bg-gradient-to-r from-pink-400 to-pink-500 rounded-xl hover:scale-105 transition-transform">
+                    <Instagram className="w-5 h-5 text-white" />
+                  </a>
+                  <a href="https://www.tiktok.com/upload/" target="_blank" rel="noopener noreferrer"
+                     className="p-3 bg-black rounded-xl hover:scale-105 transition-transform">
+                    <Video className="w-5 h-5 text-white" />
+                  </a>
+                  <a href="https://twitter.com/compose/tweet" target="_blank" rel="noopener noreferrer"
+                     className="p-3 bg-blue-500 rounded-xl hover:scale-105 transition-transform">
+                    <Twitter className="w-5 h-5 text-white" />
+                  </a>
+                  <a href="https://www.facebook.com/" target="_blank" rel="noopener noreferrer"
+                     className="p-3 bg-blue-600 rounded-xl hover:scale-105 transition-transform">
+                    <Facebook className="w-5 h-5 text-white" />
+                  </a>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
 }
 
-type Veo3Request struct {
-	Prompt     string `json:"prompt"`
-	Duration   int    `json:"duration"`
-	AspectRatio string `json:"aspect_ratio"`
-	ImageURL   string `json:"image_url,omitempty"`
-}
-
-type Veo3Response struct {
-	VideoURL string `json:"video_url"`
-	Status   string `json:"status"`
-	Error    string `json:"error,omitempty"`
-}
-
-const VEO3_API_KEY = "your-veo3-api-key-here"
-const VEO3_API_URL = "https://api.veo3.ai/v1/generate"
-
-func main() {
-	r := gin.Default()
-
-	// CORS configuration
-	config := cors.DefaultConfig()
-	config.AllowOrigins = []string{"http://localhost:5173"}
-	config.AllowMethods = []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"}
-	config.AllowHeaders = []string{"Origin", "Content-Type", "Accept", "Authorization"}
-	r.Use(cors.New(config))
-
-	r.POST("/api/generate-video", generateVideo)
-
-	fmt.Println("Server starting on :8080")
-	r.Run(":8080")
-}
-
-func generateVideo(c *gin.Context) {
-	prompt := c.PostForm("prompt")
-	file, fileHeader, err := c.Request.FormFile("file")
-
-	if prompt == "" && err != nil {
-		c.JSON(http.StatusBadRequest, VideoResponse{
-			Error: "Either prompt or file is required",
-		})
-		return
-	}
-
-	var imageURL string
-	
-	// Handle file upload if present
-	if err == nil && file != nil {
-		defer file.Close()
-		
-		// For demo purposes, we'll simulate uploading to a temporary storage
-		// In production, you'd upload to cloud storage and get a URL
-		imageURL = fmt.Sprintf("temp://uploaded-file-%d", time.Now().Unix())
-		fmt.Printf("Received file: %s, size: %d bytes\n", fileHeader.Filename, fileHeader.Size)
-	}
-
-	// Prepare request to Veo3 API
-	veo3Req := Veo3Request{
-		Prompt:      prompt,
-		Duration:    25, // 25 seconds as middle ground
-		AspectRatio: "9:16", // Default to vertical for social media
-		ImageURL:    imageURL,
-	}
-
-	// Call Veo3 API
-	videoURL, err := callVeo3API(veo3Req)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, VideoResponse{
-			Error: fmt.Sprintf("Failed to generate video: %v", err),
-		})
-		return
-	}
-
-	c.JSON(http.StatusOK, VideoResponse{
-		VideoURL: videoURL,
-	})
-}
-
-func callVeo3API(req Veo3Request) (string, error) {
-	// Simulate API call for demo purposes
-	// In production, replace this with actual Veo3 API integration
-	
-	fmt.Printf("Calling Veo3 API with prompt: %s\n", req.Prompt)
-	
-	// Simulate processing time
-	time.Sleep(3 * time.Second)
-	
-	// Return a demo video URL (you would replace this with actual Veo3 response)
-	demoVideoURL := "https://commondatastorage.googleapis.com/gtv-videos-bucket/sample/BigBuckBunny.mp4"
-	
-	/* 
-	// Actual Veo3 API call would look like this:
-	
-	jsonData, err := json.Marshal(req)
-	if err != nil {
-		return "", err
-	}
-
-	httpReq, err := http.NewRequest("POST", VEO3_API_URL, bytes.NewBuffer(jsonData))
-	if err != nil {
-		return "", err
-	}
-
-	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("Authorization", "Bearer "+VEO3_API_KEY)
-
-	client := &http.Client{Timeout: 300 * time.Second}
-	resp, err := client.Do(httpReq)
-	if err != nil {
-		return "", err
-	}
-	defer resp.Body.Close()
-
-	var veo3Resp Veo3Response
-	if err := json.NewDecoder(resp.Body).Decode(&veo3Resp); err != nil {
-		return "", err
-	}
-
-	if veo3Resp.Error != "" {
-		return "", fmt.Errorf("Veo3 API error: %s", veo3Resp.Error)
-	}
-
-	return veo3Resp.VideoURL, nil
-	*/
-	
-	return demoVideoURL, nil
-}
+export default App;

@@ -135,7 +135,6 @@ function App() {
         {/* Chat Interface */}
         <div className="w-full max-w-md">
           <div className="bg-white/95 backdrop-blur-sm rounded-2xl shadow-2xl overflow-hidden">
-            {/* Input Area */}
             <div className="p-4">
               {selectedFile && (
                 <div className="mb-3 p-2 bg-gray-50 rounded-lg flex items-center justify-between">
@@ -153,15 +152,6 @@ function App() {
                   >
                     ×
                   </button>
-                </div>
-              )}
-              
-              {isLoading && (
-                <div className="mb-3 p-3 bg-gray-50 rounded-lg">
-                  <div className="flex items-center space-x-2">
-                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-pink-500"></div>
-                    <p className="text-sm text-gray-600 font-ibm">Generating your video...</p>
-                  </div>
                 </div>
               )}
               
@@ -221,34 +211,43 @@ function App() {
                   </button>
                 </div>
               </form>
-            </div>
-            
-            {/* Social Media Links - Show after video generation */}
-            {messages.length > 0 && messages[messages.length - 1].videoUrl && (
-              <div className="border-t border-gray-200 p-4">
-                <p className="text-sm text-gray-600 mb-3 font-ibm text-center">Share your video:</p>
-                <div className="flex justify-center gap-3">
-                  <a href="https://www.instagram.com/create/story/" target="_blank" rel="noopener noreferrer" 
-                     className="p-3 bg-gradient-to-r from-pink-400 to-pink-500 rounded-xl hover:scale-105 transition-transform">
-                    <Instagram className="w-5 h-5 text-white" />
-                  </a>
-                  <a href="https://www.tiktok.com/upload/" target="_blank" rel="noopener noreferrer"
-                     className="p-3 bg-black rounded-xl hover:scale-105 transition-transform">
-                    <Video className="w-5 h-5 text-white" />
-                  </a>
-                  <a href="https://twitter.com/compose/tweet" target="_blank" rel="noopener noreferrer"
-                     className="p-3 bg-blue-500 rounded-xl hover:scale-105 transition-transform">
-                    <Twitter className="w-5 h-5 text-white" />
-                  </a>
-                  <a href="https://www.facebook.com/" target="_blank" rel="noopener noreferrer"
-                     className="p-3 bg-blue-600 rounded-xl hover:scale-105 transition-transform">
-                    <Facebook className="w-5 h-5 text-white" />
-                  </a>
+              
+              {isLoading && (
+                <div className="mt-3 p-3 bg-gray-50 rounded-lg">
+                  <div className="flex items-center space-x-2">
+                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-pink-500"></div>
+                    <p className="text-sm text-gray-600 font-ibm">Generating your video...</p>
+                  </div>
                 </div>
-              </div>
-            )}
+              )}
+            </div>
           </div>
         </div>
+        
+        {/* Social Media Links - Show after video generation */}
+        {messages.length > 0 && messages[messages.length - 1].videoUrl && (
+          <div className="w-full max-w-md bg-white/95 backdrop-blur-sm rounded-2xl shadow-2xl p-4">
+            <p className="text-sm text-gray-600 mb-3 font-ibm text-center">Share your video:</p>
+            <div className="flex justify-center gap-3">
+              <a href="https://www.instagram.com/create/story/" target="_blank" rel="noopener noreferrer" 
+                 className="p-3 bg-gradient-to-r from-pink-400 to-pink-500 rounded-xl hover:scale-105 transition-transform">
+                <Instagram className="w-5 h-5 text-white" />
+              </a>
+              <a href="https://www.tiktok.com/upload/" target="_blank" rel="noopener noreferrer"
+                 className="p-3 bg-black rounded-xl hover:scale-105 transition-transform">
+                <Video className="w-5 h-5 text-white" />
+              </a>
+              <a href="https://twitter.com/compose/tweet" target="_blank" rel="noopener noreferrer"
+                 className="p-3 bg-blue-500 rounded-xl hover:scale-105 transition-transform">
+                <Twitter className="w-5 h-5 text-white" />
+              </a>
+              <a href="https://www.facebook.com/" target="_blank" rel="noopener noreferrer"
+                 className="p-3 bg-blue-600 rounded-xl hover:scale-105 transition-transform">
+                <Facebook className="w-5 h-5 text-white" />
+              </a>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
