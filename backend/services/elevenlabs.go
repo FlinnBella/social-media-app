@@ -9,6 +9,7 @@ import (
 	"os"
 	"social-media-ai-video/config"
 	"social-media-ai-video/models"
+	"time"
 )
 
 type ElevenLabsService struct {
@@ -25,7 +26,7 @@ func NewElevenLabsService(cfg *config.APIConfig) *ElevenLabsService {
 	return &ElevenLabsService{config: cfg}
 }
 
-func (els *ElevenLabsService) GenerateSpeech(ttsConfig models.TTSConfig, outputPath string) error {
+func (els *ElevenLabsService) GenerateSpeech(ttsConfig models.TTSConfig) error {
 	// Prepare request payload
 	payload := TTSRequest{
 		Text:    ttsConfig.Script,
@@ -65,6 +66,7 @@ func (els *ElevenLabsService) GenerateSpeech(ttsConfig models.TTSConfig, outputP
 	}
 
 	// Save audio file
+	outputPath := fmt.Sprintf("./tmp/audio_%d.mp3", time.Now().UnixNano())
 	file, err := os.Create(outputPath)
 	if err != nil {
 		return fmt.Errorf("failed to create audio file: %v", err)

@@ -2,6 +2,7 @@ package models
 
 type VideoGenerationRequest struct {
 	Prompt string `json:"prompt" binding:"required"`
+	Image  string `json:"image,omitempty"`
 }
 
 type VideoGenerationResponse struct {

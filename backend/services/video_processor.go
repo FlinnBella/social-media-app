@@ -5,11 +5,10 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"social-media-ai-video/models"
 	"time"
-
-	ffmpeg "github.com/u2takey/ffmpeg-go"
 )
 
 type VideoProcessor struct {
@@ -92,54 +91,57 @@ func (vp *VideoProcessor) downloadVideo(url, outputPath string) error {
 }
 
 func (vp *VideoProcessor) generateTTS(config models.TTSConfig, outputPath string) error {
-	// Simulate ElevenLabs API call
-	// In production, replace with actual ElevenLabs integration
-	
-	// For demo, create a silent audio file
-	err := ffmpeg.Input("anullsrc=channel_layout=stereo:sample_rate=48000", ffmpeg.KwArgs{"f": "lavfi", "t": "10"}).
-		Output(outputPath, ffmpeg.KwArgs{"c:a": "mp3"}).
-		OverWriteOutput().
-		Run()
-	
-	return err
+	cmd := exec.Command(
+		"ffmpeg",
+		"-f", "lavfi",
+		"-i", "anullsrc=channel_layout=stereo:sample_rate=48000",
+		"-t", "10",
+		"-c:a", "mp3",
+		"-y", // overwrite output if exists
+		outputPath,
+	)
+	return cmd.Run()
 }
 
 func (vp *VideoProcessor) downloadBackgroundMusic(genre, outputPath string) error {
-	// Simulate background music download
-	// In production, you'd have a library of music files or API integration
-	
-	// For demo, create a silent audio file
-	err := ffmpeg.Input("anullsrc=channel_layout=stereo:sample_rate=48000", ffmpeg.KwArgs{"f": "lavfi", "t": "30"}).
-		Output(outputPath, ffmpeg.KwArgs{"c:a": "mp3"}).
-		OverWriteOutput().
-		Run()
-	
-	return err
+	cmd := exec.Command(
+		"ffmpeg",
+		"-f", "lavfi",
+		"-i", "anullsrc=channel_layout=stereo:sample_rate=48000",
+		"-t", "30",
+		"-c:a", "mp3",
+		"-y",
+		outputPath,
+	)
+	return cmd.Run()
 }
 
-func (vp *VideoProcessor) combineVideos(request *models.VideoCompositionRequest, videoFiles []string, audioPath, musicPath, outputPath string) error {
-	// Create filter complex for video concatenation with transitions
-	var inputs []ffmpeg.Stream
-	
-	// Add video inputs
-	for _, videoFile := range videoFiles {
-		inputs = append(inputs, ffmpeg.Input(videoFile))
-	}
-	
-	// Add audio inputs
-	inputs = append(inputs, ffmpeg.Input(audioPath))
-	if request.BackgroundMusic.Enabled {
-		inputs = append(inputs, ffmpeg.Input(musicPath))
+func (vp *VideoProcessor) combineVideos(
+	request *models.VideoCompositionRequest,
+	videoFiles []string,
+	audioPath, musicPath, outputPath string,
+) error {
+
+	args := []string{}
+
+	// Input videos
+	for _, v := range videoFiles {
+		args = append(args, "-i", v)
 	}
 
-	// Build filter complex for video processing
+	// Input TTS audio
+	args = append(args, "-i", audioPath)
+
+	// Input background music if enabled
+	if request.BackgroundMusic.Enabled {
+		args = append(args, "-i", musicPath)
+	}
+
+	// Build filter_complex string
 	filterComplex := vp.buildFilterComplex(request, len(videoFiles))
-	
-	// Create the final output
 	var audioFilter string
 	if request.BackgroundMusic.Enabled {
-		// Mix TTS with background music
-		audioFilter = fmt.Sprintf("[%d:a][%d:a]amix=inputs=2:duration=first:dropout_transition=2,volume=%.2f[audio]", 
+		audioFilter = fmt.Sprintf("[%d:a][%d:a]amix=inputs=2:duration=first:dropout_transition=2,volume=%.2f[audio]",
 			len(videoFiles), len(videoFiles)+1, request.TTSConfig.Volume)
 	} else {
 		audioFilter = fmt.Sprintf("[%d:a]volume=%.2f[audio]", len(videoFiles), request.TTSConfig.Volume)
@@ -147,21 +149,28 @@ func (vp *VideoProcessor) combineVideos(request *models.VideoCompositionRequest,
 
 	fullFilter := filterComplex + ";" + audioFilter
 
-	return ffmpeg.Input("").
-		GlobalArgs("-filter_complex", fullFilter).
-		Output(outputPath, ffmpeg.KwArgs{
-			"map":     "[video]",
-			"map":     "[audio]",
-			"c:v":     "libx264",
-			"c:a":     "aac",
-			"preset":  "fast",
-			"crf":     "23",
-			"r":       "30",
-			"s":       fmt.Sprintf("%dx%d", request.Resolution.Width, request.Resolution.Height),
-		}).
-		OverWriteOutput().
-		Run()
+	args = append(args,
+		"-filter_complex", fullFilter,
+		"-map", "[video]",
+		"-map", "[audio]",
+		"-c:v", "libx264",
+		"-c:a", "aac",
+		"-preset", "fast",
+		"-crf", "23",
+		"-r", "30",
+		"-s", fmt.Sprintf("%dx%d", request.Resolution.Width, request.Resolution.Height),
+		"-y", // overwrite
+		outputPath,
+	)
+
+	cmd := exec.Command("ffmpeg", args...)
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("ffmpeg error: %v, output: %s", err, string(output))
+	}
+	return nil
 }
+
 
 func (vp *VideoProcessor) buildFilterComplex(request *models.VideoCompositionRequest, numVideos int) string {
 	var filter string

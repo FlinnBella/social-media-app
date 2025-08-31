@@ -1,4 +1,5 @@
 import React, { useState, useRef } from 'react';
+import { toast } from 'sonner';
 import { Send, Upload, Camera, Video, Image, Instagram, Twitter, Facebook } from 'lucide-react';
 
 interface Message {
@@ -46,18 +47,25 @@ function App() {
     setIsLoading(true);
 
     try {
-      const formData = new FormData();
-      formData.append('prompt', inputText);
+      let response: Response;
       if (selectedFile) {
+        const formData = new FormData();
+        formData.append('prompt', inputText);
         formData.append('file', selectedFile);
+        response = await fetch('http://localhost:8080/api/generate-video', {
+          method: 'POST',
+          body: formData,
+        });
+      } else {
+        response = await fetch('http://localhost:8080/api/generate-video', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ prompt: inputText }),
+        });
       }
 
-      const response = await fetch('http://localhost:8080/api/generate-video', {
-        method: 'POST',
-        body: formData,
-      });
-
       const result = await response.json();
+      console.log(result);
 
       if (response.ok) {
         const assistantMessage: Message = {
@@ -78,6 +86,7 @@ function App() {
         throw new Error(result.error || 'Failed to generate video');
       }
     } catch (error) {
+      toast.error(error instanceof Error ? error.message : 'Failed to generate video');
       const errorMessage: Message = {
         id: (Date.now() + 1).toString(),
         type: 'assistant',
@@ -154,7 +163,8 @@ function App() {
                   </button>
                 </div>
               )}
-              
+
+              {!isLoading ? (
               <form onSubmit={handleSubmit} className="space-y-3">
                 <div className="flex items-end space-x-2">
                   <div className="flex-1">
@@ -211,8 +221,8 @@ function App() {
                   </button>
                 </div>
               </form>
-              
-              {isLoading && (
+              ):    
+              (
                 <div className="mt-3 p-3 bg-gray-50 rounded-lg">
                   <div className="flex items-center space-x-2">
                     <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-pink-500"></div>

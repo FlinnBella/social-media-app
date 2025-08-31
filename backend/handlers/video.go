@@ -18,7 +18,7 @@ type VideoHandler struct {
 
 func NewVideoHandler(cfg *config.APIConfig) *VideoHandler {
 	return &VideoHandler{
-		contentGenerator: services.NewContentGenerator(),
+		contentGenerator: services.NewContentGenerator(cfg),
 		videoProcessor:   services.NewVideoProcessor(),
 		elevenLabs:       services.NewElevenLabsService(cfg),
 	}
@@ -68,19 +68,23 @@ func (vh *VideoHandler) GenerateVideo(c *gin.Context) {
 	}
 
 	// Process and combine videos
-	videoURL, err := vh.videoProcessor.ProcessVideo(composition)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, models.VideoGenerationResponse{
-			Error:  fmt.Sprintf("Failed to process video: %v", err),
-			Status: "error",
-		})
-		return
-	}
+	//videoURL, err := vh.videoProcessor.ProcessVideo(composition)
+	//if err != nil {
+	//	c.JSON(http.StatusInternalServerError, models.VideoGenerationResponse{
+	//		Error:  fmt.Sprintf("Failed to process video: %v", err),
+	//		Status: "error",
+	//	})
+	//	return
+	
 
-	c.JSON(http.StatusOK, models.VideoGenerationResponse{
-		VideoURL: videoURL,
-		Status:   "success",
-	})
+	//c.JSON(http.StatusOK, models.VideoGenerationResponse{
+	//	VideoURL: videoURL,
+	//	Status:   "success",
+	//})
+	if composition != nil {
+	 c.JSON(http.StatusOK, composition)
+	}
+	return
 }
 
 // GetComposition returns the video composition structure for debugging
