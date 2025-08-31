@@ -3,6 +3,8 @@ package handlers
 import (
 	"fmt"
 	"net/http"
+	"os"
+	"path/filepath"
 	"social-media-ai-video/config"
 	"social-media-ai-video/models"
 	"social-media-ai-video/services"
@@ -67,18 +69,40 @@ func (vh *VideoHandler) GenerateVideo(c *gin.Context) {
 		return
 	}
 
-	// Build absolute URL to backend static file
-	proto := c.Request.Header.Get("X-Forwarded-Proto")
-	if proto == "" {
-		proto = "http"
+	// Stream the generated file inline as video/* so the frontend can read it as a Blob
+	fullPath := filepath.Join("./tmp", filename)
+	file, openErr := os.Open(fullPath)
+	if openErr != nil {
+		c.JSON(http.StatusInternalServerError, models.VideoGenerationResponse{
+			Error:  fmt.Sprintf("Failed to open video: %v", openErr),
+			Status: "error",
+		})
+		return
 	}
-	host := c.Request.Host
-	videoURL := fmt.Sprintf("%s://%s/static/%s", proto, host, filename)
+	defer file.Close()
+	stat, statErr := file.Stat()
+	if statErr != nil {
+		file.Close()
+		c.JSON(http.StatusInternalServerError, models.VideoGenerationResponse{
+			Error:  fmt.Sprintf("Failed to stat video: %v", statErr),
+			Status: "error",
+		})
+		return
+	}
 
-	c.JSON(http.StatusOK, models.VideoGenerationResponse{
-		VideoURL: videoURL,
-		Status:   "success",
-	})
+	contentType := "video/mp4"
+	switch filepath.Ext(filename) {
+	case ".webm":
+		contentType = "video/webm"
+	case ".ogg":
+		contentType = "video/ogg"
+	case ".mov":
+		contentType = "video/quicktime"
+	}
+
+	c.Header("Content-Type", contentType)
+	c.Header("Content-Disposition", fmt.Sprintf("inline; filename=\"%s\"", filename))
+	c.DataFromReader(http.StatusOK, stat.Size(), contentType, file, nil)
 }
 
 // GetComposition returns the video composition structure for debugging
