@@ -57,34 +57,28 @@ func (vh *VideoHandler) GenerateVideo(c *gin.Context) {
 		}
 	}
 
-	// Generate video composition structure
-	composition, err := vh.contentGenerator.GenerateVideoComposition(req.Prompt)
+	// New flow: trigger short video generation + download
+	filename, err := vh.contentGenerator.GenerateShortVideo(req.Prompt)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, models.VideoGenerationResponse{
-			Error:  fmt.Sprintf("Failed to generate composition: %v", err),
+			Error:  fmt.Sprintf("Failed to generate short video: %v", err),
 			Status: "error",
 		})
 		return
 	}
 
-	// Process and combine videos
-	//videoURL, err := vh.videoProcessor.ProcessVideo(composition)
-	//if err != nil {
-	//	c.JSON(http.StatusInternalServerError, models.VideoGenerationResponse{
-	//		Error:  fmt.Sprintf("Failed to process video: %v", err),
-	//		Status: "error",
-	//	})
-	//	return
-	
-
-	//c.JSON(http.StatusOK, models.VideoGenerationResponse{
-	//	VideoURL: videoURL,
-	//	Status:   "success",
-	//})
-	if composition != nil {
-	 c.JSON(http.StatusOK, composition)
+	// Build absolute URL to backend static file
+	proto := c.Request.Header.Get("X-Forwarded-Proto")
+	if proto == "" {
+		proto = "http"
 	}
-	return
+	host := c.Request.Host
+	videoURL := fmt.Sprintf("%s://%s/static/%s", proto, host, filename)
+
+	c.JSON(http.StatusOK, models.VideoGenerationResponse{
+		VideoURL: videoURL,
+		Status:   "success",
+	})
 }
 
 // GetComposition returns the video composition structure for debugging

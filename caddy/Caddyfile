@@ -1,0 +1,8 @@
+:80 {
+    # Serve frontend static files
+    root * /src/dist
+    file_server
+
+    # Proxy API requests to Go backend
+    reverse_proxy /api/* localhost:8080
+}

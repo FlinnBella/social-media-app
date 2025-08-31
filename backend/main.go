@@ -34,6 +34,9 @@ func main() {
 		api.GET("/composition", videoHandler.GetComposition)
 	}
 
+	// Serve static files from ./tmp at /static
+	r.Static("/static", "./tmp")
+
 	// Health check
 	r.GET("/health", func(c *gin.Context) {
 		c.JSON(200, gin.H{"status": "ok"})

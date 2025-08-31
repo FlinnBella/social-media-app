@@ -64,26 +64,61 @@ function App() {
         });
       }
 
-      const result = await response.json();
-      console.log(result);
+      const contentType = response.headers.get('content-type') || '';
 
-      if (response.ok) {
-        const assistantMessage: Message = {
-          id: (Date.now() + 1).toString(),
-          type: 'assistant',
-          content: 'Your video has been generated! You can now share it on your favorite social media platforms.',
-          timestamp: new Date(),
-          videoUrl: result.videoUrl,
-          socialLinks: {
-            instagram: `https://www.instagram.com/create/story/`,
-            tiktok: `https://www.tiktok.com/upload/`,
-            twitter: `https://twitter.com/compose/tweet`,
-            facebook: `https://www.facebook.com/`,
-          },
-        };
-        setMessages(prev => [...prev, assistantMessage]);
+      if (!response.ok) {
+        try {
+          if (contentType.includes('application/json')) {
+            const errorJson = await response.json();
+            throw new Error(errorJson.error || 'Failed to generate video');
+          }
+          const errorText = await response.text();
+          throw new Error(errorText || 'Failed to generate video');
+        } catch (e) {
+          throw new Error(e instanceof Error ? e.message : 'Failed to generate video');
+        }
+      }
+
+      let videoObjectUrl: string | undefined;
+      if (contentType.includes('video/')) {
+        // Backend returned an MP4 (or other video) directly
+        const blob = await response.blob();
+        videoObjectUrl = URL.createObjectURL(blob);
+      } else if (contentType.includes('application/json')) {
+        // Backend returned JSON (fallback/compatibility)
+        const result = await response.json();
+        if (result && result.videoUrl) {
+          videoObjectUrl = result.videoUrl;
+        } else if (result && result.dataUrl) {
+          videoObjectUrl = result.dataUrl;
+        } else {
+          throw new Error('Unexpected response: no video found');
+        }
       } else {
-        throw new Error(result.error || 'Failed to generate video');
+        // Fallback: try to treat as binary
+        const blob = await response.blob();
+        videoObjectUrl = URL.createObjectURL(blob);
+      }
+
+      const previousVideoUrl = messages.length > 0 ? messages[messages.length - 1].videoUrl : undefined;
+
+      const assistantMessage: Message = {
+        id: (Date.now() + 1).toString(),
+        type: 'assistant',
+        content: 'Your video has been generated! You can now share it on your favorite social media platforms.',
+        timestamp: new Date(),
+        videoUrl: videoObjectUrl,
+        socialLinks: {
+          instagram: `https://www.instagram.com/create/story/`,
+          tiktok: `https://www.tiktok.com/upload/`,
+          twitter: `https://twitter.com/compose/tweet`,
+          facebook: `https://www.facebook.com/`,
+        },
+      };
+      setMessages(prev => [...prev, assistantMessage]);
+
+      if (previousVideoUrl && previousVideoUrl.startsWith('blob:')) {
+        try { URL.revokeObjectURL(previousVideoUrl); } catch {}
       }
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Failed to generate video');
