@@ -2,12 +2,12 @@ package handlers
 
 import (
 	"fmt"
+	"io"
 	"net/http"
-	"os"
-	"path/filepath"
 	"social-media-ai-video/config"
 	"social-media-ai-video/models"
 	"social-media-ai-video/services"
+	"strings"
 
 	"github.com/gin-gonic/gin"
 )
@@ -26,83 +26,118 @@ func NewVideoHandler(cfg *config.APIConfig) *VideoHandler {
 	}
 }
 
-func (vh *VideoHandler) GenerateVideo(c *gin.Context) {
-	var req models.VideoGenerationRequest
-	
-	// Handle both JSON and form data
-	if c.ContentType() == "application/json" {
-		if err := c.ShouldBindJSON(&req); err != nil {
-			c.JSON(http.StatusBadRequest, models.VideoGenerationResponse{
-				Error:  "Invalid request format",
-				Status: "error",
-			})
+func (vh *VideoHandler) GenerateVideoReels(c *gin.Context) {
+	// Enforce multipart/form-data only
+	ct := c.GetHeader("Content-Type")
+	if !strings.HasPrefix(ct, "multipart/form-data") {
+		c.JSON(http.StatusUnsupportedMediaType, gin.H{
+			"error":  "Content-Type must be multipart/form-data",
+			"status": "error",
+		})
+		return
+	}
+
+	prompt := c.PostForm("prompt")
+	if prompt == "" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error":  "Prompt is required",
+			"status": "error",
+		})
+		return
+	}
+
+	form, err := c.MultipartForm()
+	if err != nil || form == nil {
+		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "invalid multipart form"})
+		return
+	}
+	files := form.File["image"]
+	if len(files) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "at least one image is required (field name: image)"})
+		return
+	}
+
+	vr := models.VideoGenerationRequest{Prompt: prompt, Source: models.VideoSourceReels}
+	for _, fh := range files {
+		src, err := fh.Open()
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": fmt.Sprintf("failed to open uploaded file: %v", err)})
 			return
 		}
-	} else {
-		// Handle form data
-		req.Prompt = c.PostForm("prompt")
-		if req.Prompt == "" {
-			c.JSON(http.StatusBadRequest, models.VideoGenerationResponse{
-				Error:  "Prompt is required",
-				Status: "error",
-			})
+		b, err := io.ReadAll(src)
+		src.Close()
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": fmt.Sprintf("failed to read uploaded file: %v", err)})
 			return
 		}
-		
-		// Handle file upload if present
-		file, fileHeader, err := c.Request.FormFile("file")
-		if err == nil && file != nil {
-			defer file.Close()
-			// For demo purposes, we'll just log the file info
-			// In production, you'd process the uploaded file as reference
-			c.Header("X-Uploaded-File", fileHeader.Filename)
+		vr.Images = append(vr.Images, b)
+		vr.ImageNames = append(vr.ImageNames, fh.Filename)
+	}
+
+	resp, svcErr := vh.contentGenerator.GenerateVideoSchemaMultipart(vr)
+	if svcErr != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": svcErr.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, resp)
+}
+
+func (vh *VideoHandler) GenerateVideoPexels(c *gin.Context) {
+	// Enforce multipart/form-data only
+	ct := c.GetHeader("Content-Type")
+	if !strings.HasPrefix(ct, "multipart/form-data") {
+		c.JSON(http.StatusUnsupportedMediaType, gin.H{
+			"error":  "Improper Data Format: Content-Type must be multipart/form-data",
+			"status": "error",
+		})
+		return
+	}
+
+	prompt := c.PostForm("prompt")
+	if prompt == "" {
+		c.JSON(http.StatusBadRequest, gin.H{
+			"error":  "Prompt is required",
+			"status": "error",
+		})
+		return
+	}
+
+	form, err := c.MultipartForm()
+	if err != nil || form == nil {
+		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "invalid multipart form"})
+		return
+	}
+	files := form.File["image"]
+	if len(files) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "at least one image is required (field name: image)"})
+		return
+	}
+
+	vr := models.VideoGenerationRequest{Prompt: prompt, Source: models.VideoSourcePexels}
+	for _, fh := range files {
+		src, err := fh.Open()
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": fmt.Sprintf("failed to open uploaded file: %v", err)})
+			return
 		}
+		b, err := io.ReadAll(src)
+		src.Close()
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": fmt.Sprintf("failed to read uploaded file: %v", err)})
+			return
+		}
+		vr.Images = append(vr.Images, b)
+		vr.ImageNames = append(vr.ImageNames, fh.Filename)
 	}
 
-	// New flow: trigger short video generation + download
-	filename, err := vh.contentGenerator.GenerateShortVideo(req.Prompt)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, models.VideoGenerationResponse{
-			Error:  fmt.Sprintf("Failed to generate short video: %v", err),
-			Status: "error",
-		})
+	resp, svcErr := vh.contentGenerator.GenerateVideoSchemaMultipart(vr)
+	if svcErr != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": svcErr.Error()})
 		return
 	}
 
-	// Stream the generated file inline as video/* so the frontend can read it as a Blob
-	fullPath := filepath.Join("./tmp", filename)
-	file, openErr := os.Open(fullPath)
-	if openErr != nil {
-		c.JSON(http.StatusInternalServerError, models.VideoGenerationResponse{
-			Error:  fmt.Sprintf("Failed to open video: %v", openErr),
-			Status: "error",
-		})
-		return
-	}
-	defer file.Close()
-	stat, statErr := file.Stat()
-	if statErr != nil {
-		file.Close()
-		c.JSON(http.StatusInternalServerError, models.VideoGenerationResponse{
-			Error:  fmt.Sprintf("Failed to stat video: %v", statErr),
-			Status: "error",
-		})
-		return
-	}
-
-	contentType := "video/mp4"
-	switch filepath.Ext(filename) {
-	case ".webm":
-		contentType = "video/webm"
-	case ".ogg":
-		contentType = "video/ogg"
-	case ".mov":
-		contentType = "video/quicktime"
-	}
-
-	c.Header("Content-Type", contentType)
-	c.Header("Content-Disposition", fmt.Sprintf("inline; filename=\"%s\"", filename))
-	c.DataFromReader(http.StatusOK, stat.Size(), contentType, file, nil)
+	c.JSON(http.StatusOK, resp)
 }
 
 // GetComposition returns the video composition structure for debugging

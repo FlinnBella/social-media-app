@@ -3,24 +3,35 @@ package config
 import "os"
 
 type APIConfig struct {
-	ElevenLabsAPIKey string
+	Environment       string
+	ElevenLabsAPIKey  string
 	ElevenLabsBaseURL string
-	PexelsAPIKey     string
-	PexelsBaseURL    string
-	N8NURL           string
-	N8NAPIKey        string
+	N8NPLEXELSURL     string
+	N8NREELSURL       string
+	N8NAPIKey         string
 	ShortVideoBaseURL string
-	Port             string
+	Port              string
 }
 
 func LoadAPIConfig() *APIConfig {
+	// Determine environment (default to development)
+	env := getEnvOrDefault("APP_ENV", "development")
+
+	// Base URLs (can be overridden below)
+	N8NPLEXELSURL := getEnvOrDefault("N8N_PLEXELS_URL", "https://evandickinson.app.n8n.cloud/webhook/pexels-workflow")
+	N8NREELSURL := getEnvOrDefault("N8N_REELS_URL", "https://evandickinson.app.n8n.cloud/webhook/reels-workflow")
+	if env == "development" {
+		N8NPLEXELSURL = getEnvOrDefault("N8N_PLEXELS_URL", "https://evandickinson.app.n8n.cloud/webhook-test/pexels-workflow")
+		N8NREELSURL = getEnvOrDefault("N8N_REELS_URL", "https://evandickinson.app.n8n.cloud/webhook-test/reels-workflow")
+	}
+
 	return &APIConfig{
+		Environment:       env,
 		ElevenLabsAPIKey:  getEnvOrDefault("ELEVENLABS_API_KEY", "your-elevenlabs-api-key-here"),
 		ElevenLabsBaseURL: getEnvOrDefault("ELEVENLABS_BASE_URL", "https://api.elevenlabs.io/v1"),
-		PexelsAPIKey:      getEnvOrDefault("PEXELS_API_KEY", "your-pexels-api-key-here"),
-		PexelsBaseURL:     getEnvOrDefault("PEXELS_BASE_URL", "https://api.pexels.com/v1"),
-		N8NURL:           getEnvOrDefault("N8N_URL", "https://evandickinson.app.n8n.cloud/webhook/5ca39975-fffb-4405-96c1-2be4c5eb5dbe"),
-		N8NAPIKey:         getEnvOrDefault("N8N_API_KEY", "n8n_38761e841376469eaa017d3c898b52c2"),
+		N8NPLEXELSURL:     N8NPLEXELSURL,
+		N8NREELSURL:       N8NREELSURL,
+		N8NAPIKey:         getEnvOrDefault("N8N_API_KEY", "n8n_api_key_here"),
 		ShortVideoBaseURL: getEnvOrDefault("SHORT_VIDEO_BASE_URL", "http://34.66.33.115:3123"),
 		Port:              getEnvOrDefault("PORT", "8080"),
 	}

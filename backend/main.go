@@ -30,7 +30,8 @@ func main() {
 	// API routes
 	api := r.Group("/api")
 	{
-		api.POST("/generate-video", videoHandler.GenerateVideo)
+		api.POST("/generate-video-pexels", videoHandler.GenerateVideoPexels)
+		api.POST("/generate-video-reels", videoHandler.GenerateVideoReels)
 		api.GET("/composition", videoHandler.GetComposition)
 	}
 

@@ -19,22 +19,27 @@ interface Message {
 function App() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputText, setInputText] = useState('');
-  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
 
   const handleFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.target.files?.[0];
-    if (file && (file.type.startsWith('image/') || file.type.startsWith('video/'))) {
-      setSelectedFile(file);
+    const files = event.target.files;
+    if (!files) return;
+    const imageFiles = Array.from(files).filter((f) => f.type.startsWith('image/'));
+    if (imageFiles.length === 0) {
+      toast.error('Please select image files');
+      return;
     }
+    setSelectedFiles((prev) => [...prev, ...imageFiles]);
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
-    if (!inputText.trim() && !selectedFile) return;
+    if (!inputText.trim() && selectedFiles.length === 0) 
+      {return toast.error('Please enter a prompt or upload a file');};
 
     const userMessage: Message = {
       id: Date.now().toString(),
@@ -47,22 +52,15 @@ function App() {
     setIsLoading(true);
 
     try {
-      let response: Response;
-      if (selectedFile) {
-        const formData = new FormData();
-        formData.append('prompt', inputText);
-        formData.append('file', selectedFile);
-        response = await fetch('http://localhost:8080/api/generate-video', {
-          method: 'POST',
-          body: formData,
-        });
-      } else {
-        response = await fetch('http://localhost:8080/api/generate-video', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ prompt: inputText }),
-        });
+      const formData = new FormData();
+      formData.append('prompt', inputText);
+      for (const file of selectedFiles) {
+        formData.append('image', file, file.name);
       }
+      const response = await fetch('http://localhost:8080/api/generate-video-pexels', {
+        method: 'POST',
+        body: formData,
+      });
 
       const contentType = response.headers.get('content-type') || '';
 
@@ -132,7 +130,7 @@ function App() {
     } finally {
       setIsLoading(false);
       setInputText('');
-      setSelectedFile(null);
+      setSelectedFiles([]);
       if (fileInputRef.current) fileInputRef.current.value = '';
       if (cameraInputRef.current) cameraInputRef.current.value = '';
     }
@@ -180,18 +178,14 @@ function App() {
         <div className="w-full max-w-md">
           <div className="bg-white/95 backdrop-blur-sm rounded-2xl shadow-2xl overflow-hidden">
             <div className="p-4">
-              {selectedFile && (
+              {selectedFiles.length > 0 && (
                 <div className="mb-3 p-2 bg-gray-50 rounded-lg flex items-center justify-between">
                   <div className="flex items-center space-x-2">
-                    {selectedFile.type.startsWith('image/') ? (
-                      <Image className="w-4 h-4 text-gray-500" />
-                    ) : (
-                      <Video className="w-4 h-4 text-gray-500" />
-                    )}
-                    <span className="text-sm text-gray-600 truncate">{selectedFile.name}</span>
+                    <Image className="w-4 h-4 text-gray-500" />
+                    <span className="text-sm text-gray-600 truncate">{selectedFiles.length === 1 ? selectedFiles[0].name : `${selectedFiles.length} images selected`}</span>
                   </div>
                   <button 
-                    onClick={() => setSelectedFile(null)}
+                    onClick={() => setSelectedFiles([])}
                     className="text-gray-400 hover:text-gray-600"
                   >
                     ×
@@ -213,7 +207,7 @@ function App() {
                   </div>
                   <button
                     type="submit"
-                    disabled={isLoading || (!inputText.trim() && !selectedFile)}
+                    disabled={isLoading || (!inputText.trim() && selectedFiles.length === 0)}
                     className="p-3 bg-gradient-to-r from-pink-400 to-pink-500 text-white rounded-xl hover:from-pink-500 hover:to-pink-600 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200 hover:scale-105"
                   >
                     <Send className="w-5 h-5" />
@@ -224,15 +218,17 @@ function App() {
                   <input
                     ref={fileInputRef}
                     type="file"
-                    accept="image/*,video/*"
+                    accept="image/*"
+                    multiple
                     onChange={handleFileSelect}
                     className="hidden"
                   />
                   <input
                     ref={cameraInputRef}
                     type="file"
-                    accept="image/*,video/*"
+                    accept="image/*"
                     capture="environment"
+                    multiple
                     onChange={handleFileSelect}
                     className="hidden"
                   />
