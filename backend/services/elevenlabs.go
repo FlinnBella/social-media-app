@@ -7,9 +7,10 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path/filepath"
 	"social-media-ai-video/config"
 	"social-media-ai-video/models"
-	"time"
+	"strings"
 )
 
 type ElevenLabsService struct {
@@ -26,15 +27,32 @@ func NewElevenLabsService(cfg *config.APIConfig) *ElevenLabsService {
 	return &ElevenLabsService{config: cfg}
 }
 
-func (els *ElevenLabsService) GenerateSpeech(ttsConfig models.TTSConfig) error {
-	// Prepare request payload
+func (els *ElevenLabsService) GenerateSpeech(input models.TTSInput) error {
+	// Concatenate narrative parts and narration script into one text
+	var parts []string
+	if input.Narrative.Hook != "" {
+		parts = append(parts, input.Narrative.Hook)
+	}
+	if len(input.Narrative.Story) > 0 {
+		parts = append(parts, strings.Join(input.Narrative.Story, " "))
+	}
+	if input.Narrative.Cta != "" {
+		parts = append(parts, input.Narrative.Cta)
+	}
+	for _, seg := range input.Narration.Script {
+		if strings.TrimSpace(seg.Text) != "" {
+			parts = append(parts, seg.Text)
+		}
+	}
+	text := strings.Join(parts, " ")
+
 	payload := TTSRequest{
-		Text:    ttsConfig.Script,
+		Text:    text,
 		ModelID: "eleven_monolingual_v1",
 		VoiceSettings: map[string]interface{}{
-			"stability":        0.5,
+			"stability":        input.Narration.Voice.Stability,
 			"similarity_boost": 0.5,
-			"speed":           ttsConfig.Speed,
+			"speed":            input.Narration.Voice.Speed,
 		},
 	}
 
@@ -43,8 +61,7 @@ func (els *ElevenLabsService) GenerateSpeech(ttsConfig models.TTSConfig) error {
 		return fmt.Errorf("failed to marshal TTS request: %v", err)
 	}
 
-	// Make API request
-	url := fmt.Sprintf("%s/text-to-speech/%s", els.config.ElevenLabsBaseURL, ttsConfig.VoiceID)
+	url := fmt.Sprintf("%s/text-to-speech/%s", els.config.ElevenLabsBaseURL, input.Narration.Voice.VoiceID)
 	req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonData))
 	if err != nil {
 		return fmt.Errorf("failed to create TTS request: %v", err)
@@ -62,12 +79,15 @@ func (els *ElevenLabsService) GenerateSpeech(ttsConfig models.TTSConfig) error {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("TTS API returned status %d", resp.StatusCode)
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("TTS API returned status %d: %s", resp.StatusCode, string(body))
 	}
 
-	// Save audio file
-	outputPath := fmt.Sprintf("./tmp/audio_%d.mp3", time.Now().UnixNano())
-	file, err := os.Create(outputPath)
+	outputDir := filepath.Join(os.TempDir(), "tts_audio")
+	if err := os.MkdirAll(outputDir, 0o755); err != nil {
+		return fmt.Errorf("failed to create temp dir: %v", err)
+	}
+	file, err := os.CreateTemp(outputDir, "audio_*.mp3")
 	if err != nil {
 		return fmt.Errorf("failed to create audio file: %v", err)
 	}
@@ -79,4 +99,19 @@ func (els *ElevenLabsService) GenerateSpeech(ttsConfig models.TTSConfig) error {
 	}
 
 	return nil
+}
+
+func MapCompositionToTTSInput(doc models.CompositionDocument) models.TTSInput {
+	return models.TTSInput{
+		Narrative: models.NarrativeData{
+			Hook:  doc.Narrative.Hook,
+			Story: doc.Narrative.Story,
+			Cta:   doc.Narrative.Cta,
+			Tone:  doc.Narrative.Tone,
+		},
+		Narration: models.NarrationData{
+			Script: doc.Audio.Narration.Script,
+			Voice:  doc.Audio.Narration.Voice,
+		},
+	}
 }

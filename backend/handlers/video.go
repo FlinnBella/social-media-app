@@ -16,6 +16,8 @@ type VideoHandler struct {
 	contentGenerator *services.ContentGenerator
 	videoProcessor   *services.VideoProcessor
 	elevenLabs       *services.ElevenLabsService
+	backgroundMusic  *services.BackgroundMusic
+	ffmpegProcessor  *services.FFmpegCommandBuilder
 }
 
 func NewVideoHandler(cfg *config.APIConfig) *VideoHandler {
@@ -23,6 +25,8 @@ func NewVideoHandler(cfg *config.APIConfig) *VideoHandler {
 		contentGenerator: services.NewContentGenerator(cfg),
 		videoProcessor:   services.NewVideoProcessor(),
 		elevenLabs:       services.NewElevenLabsService(cfg),
+		backgroundMusic:  services.NewBackgroundMusic(cfg),
+		ffmpegProcessor:  services.NewFFmpegCommandBuilder(),
 	}
 }
 
@@ -57,6 +61,9 @@ func (vh *VideoHandler) GenerateVideoReels(c *gin.Context) {
 		return
 	}
 
+	// vr creates the initial chat object (prompt & images) upload that's sent to n8n
+	//n8n takes that and returns the a content schema outline to create.
+
 	vr := models.VideoGenerationRequest{Prompt: prompt, Source: models.VideoSourceReels}
 	for _, fh := range files {
 		src, err := fh.Open()
@@ -74,11 +81,17 @@ func (vh *VideoHandler) GenerateVideoReels(c *gin.Context) {
 		vr.ImageNames = append(vr.ImageNames, fh.Filename)
 	}
 
+	//response object is the video_composition object
 	resp, svcErr := vh.contentGenerator.GenerateVideoSchemaMultipart(vr)
 	if svcErr != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": svcErr.Error()})
 		return
 	}
+
+	//need to take parts of the response object, and pass them through multiple services
+	//ffmpeg-processor will via function calls generate tts, music,
+	//have references to all filepaths+names+data,
+	//and compose images based on that
 
 	c.JSON(http.StatusOK, resp)
 }

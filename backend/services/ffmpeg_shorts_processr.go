@@ -17,10 +17,11 @@ type VideoProcessor struct {
 
 func NewVideoProcessor() *VideoProcessor {
 	return &VideoProcessor{
-		tempDir: "/tmp/video_processing",
+		tempDir: filepath.Join(os.TempDir(), "video_processing"),
 	}
 }
 
+// need a new schema here that takes in the file dirs, filenames, and specs for ffmpeg
 func (vp *VideoProcessor) ProcessVideo(request *models.VideoCompositionRequest) (string, error) {
 	// Create temporary directory
 	sessionID := fmt.Sprintf("session_%d", time.Now().Unix())
@@ -69,7 +70,7 @@ func (vp *VideoProcessor) ProcessVideo(request *models.VideoCompositionRequest) 
 	// For demo purposes, we'll return a placeholder URL
 	// In production, you'd upload to cloud storage and return the URL
 	finalVideoURL := fmt.Sprintf("data:video/mp4;base64,%s", videoData)
-	
+
 	return finalVideoURL, nil
 }
 
@@ -171,16 +172,15 @@ func (vp *VideoProcessor) combineVideos(
 	return nil
 }
 
-
 func (vp *VideoProcessor) buildFilterComplex(request *models.VideoCompositionRequest, numVideos int) string {
 	var filter string
-	
+
 	// Scale and crop each video to target resolution
 	for i := 0; i < numVideos; i++ {
 		filter += fmt.Sprintf("[%d:v]scale=%d:%d:force_original_aspect_ratio=increase,crop=%d:%d[v%d];",
 			i, request.Resolution.Width, request.Resolution.Height, request.Resolution.Width, request.Resolution.Height, i)
 	}
-	
+
 	// Concatenate videos with transitions
 	if numVideos == 1 {
 		filter += "[v0]copy[video]"
@@ -192,6 +192,6 @@ func (vp *VideoProcessor) buildFilterComplex(request *models.VideoCompositionReq
 		}
 		filter += fmt.Sprintf("%sconcat=n=%d:v=1:a=0[video]", concatInputs, numVideos)
 	}
-	
+
 	return filter
 }

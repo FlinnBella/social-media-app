@@ -21,6 +21,8 @@ type VideoGenerationResponse struct {
 	Status   string `json:"status"`
 }
 
+// Composition request/legacy types retained
+
 type VideoCompositionRequest struct {
 	VideoLength     float64         `json:"video_length"`
 	AspectRatio     string          `json:"aspect_ratio"`
