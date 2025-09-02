@@ -11,6 +11,7 @@ import (
 	"social-media-ai-video/config"
 	"social-media-ai-video/models"
 	"strings"
+	"time"
 )
 
 type ElevenLabsService struct {
@@ -27,7 +28,9 @@ func NewElevenLabsService(cfg *config.APIConfig) *ElevenLabsService {
 	return &ElevenLabsService{config: cfg}
 }
 
-func (els *ElevenLabsService) GenerateSpeech(input models.TTSInput) error {
+// GenerateSpeechToTmp generates TTS audio and writes it under tmpDir.
+// Returns the absolute output path and the filename.
+func (els *ElevenLabsService) GenerateSpeechToTmp(input models.TTSInput, tmpDir string) (string, string, error) {
 	// Concatenate narrative parts and narration script into one text
 	var parts []string
 	if input.Narrative.Hook != "" {
@@ -58,13 +61,13 @@ func (els *ElevenLabsService) GenerateSpeech(input models.TTSInput) error {
 
 	jsonData, err := json.Marshal(payload)
 	if err != nil {
-		return fmt.Errorf("failed to marshal TTS request: %v", err)
+		return "", "", fmt.Errorf("failed to marshal TTS request: %v", err)
 	}
 
 	url := fmt.Sprintf("%s/text-to-speech/%s", els.config.ElevenLabsBaseURL, input.Narration.Voice.VoiceID)
 	req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonData))
 	if err != nil {
-		return fmt.Errorf("failed to create TTS request: %v", err)
+		return "", "", fmt.Errorf("failed to create TTS request: %v", err)
 	}
 
 	req.Header.Set("Accept", "audio/mpeg")
@@ -74,31 +77,41 @@ func (els *ElevenLabsService) GenerateSpeech(input models.TTSInput) error {
 	client := &http.Client{}
 	resp, err := client.Do(req)
 	if err != nil {
-		return fmt.Errorf("failed to make TTS request: %v", err)
+		return "", "", fmt.Errorf("failed to make TTS request: %v", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("TTS API returned status %d: %s", resp.StatusCode, string(body))
+		return "", "", fmt.Errorf("TTS API returned status %d: %s", resp.StatusCode, string(body))
 	}
 
-	outputDir := filepath.Join(os.TempDir(), "tts_audio")
-	if err := os.MkdirAll(outputDir, 0o755); err != nil {
-		return fmt.Errorf("failed to create temp dir: %v", err)
+	if tmpDir == "" {
+		tmpDir = filepath.Join(os.TempDir(), "tts_audio")
 	}
-	file, err := os.CreateTemp(outputDir, "audio_*.mp3")
+	if err := os.MkdirAll(tmpDir, 0o755); err != nil {
+		return "", "", fmt.Errorf("failed to create temp dir: %v", err)
+	}
+	filename := fmt.Sprintf("audio_%d.mp3", time.Now().UnixNano())
+	outputPath := filepath.Join(tmpDir, filename)
+	file, err := os.Create(outputPath)
 	if err != nil {
-		return fmt.Errorf("failed to create audio file: %v", err)
+		return "", "", fmt.Errorf("failed to create audio file: %v", err)
 	}
 	defer file.Close()
 
 	_, err = io.Copy(file, resp.Body)
 	if err != nil {
-		return fmt.Errorf("failed to save audio file: %v", err)
+		return "", "", fmt.Errorf("failed to save audio file: %v", err)
 	}
 
-	return nil
+	return outputPath, filename, nil
+}
+
+// Backwards-compatible wrapper
+func (els *ElevenLabsService) GenerateSpeech(input models.TTSInput) error {
+	_, _, err := els.GenerateSpeechToTmp(input, "")
+	return err
 }
 
 func MapCompositionToTTSInput(doc models.CompositionDocument) models.TTSInput {

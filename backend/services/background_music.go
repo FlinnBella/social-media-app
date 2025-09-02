@@ -16,8 +16,8 @@ type BackgroundMusic struct {
 }
 
 type MusicFile struct {
-	file_path string
-	file_name string
+	FilePath string
+	FileName string
 }
 
 func NewBackgroundMusic(cfg *config.APIConfig) *BackgroundMusic {
@@ -32,9 +32,13 @@ func randomHex(n int) (string, error) {
 	return hex.EncodeToString(b), nil
 }
 
-func (b *BackgroundMusic) GenerateMusicFiles(music_schema string) (*MusicFile, error) {
-	// Treat music_schema as a direct download URL for now
-	resp, err := http.Get(music_schema)
+// ResolveAndDownload treats trackIdOrURL as a direct URL for now.
+// Future: look up track by trackId/genre/mood via a catalog/service.
+func (b *BackgroundMusic) ResolveAndDownload(trackIdOrURL string) (*MusicFile, error) {
+	if trackIdOrURL == "" {
+		return nil, fmt.Errorf("empty track id/url")
+	}
+	resp, err := http.Get(trackIdOrURL)
 	if err != nil {
 		return nil, fmt.Errorf("failed to GET music: %w", err)
 	}
@@ -64,5 +68,5 @@ func (b *BackgroundMusic) GenerateMusicFiles(music_schema string) (*MusicFile, e
 		return nil, fmt.Errorf("failed to write file: %w", err)
 	}
 
-	return &MusicFile{file_path: file_path, file_name: file_name}, nil
+	return &MusicFile{FilePath: file_path, FileName: file_name}, nil
 }

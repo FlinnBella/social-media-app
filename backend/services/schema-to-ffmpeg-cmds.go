@@ -1,8 +1,10 @@
 package services
 
 import (
+	"encoding/json"
 	"fmt"
 	"path/filepath"
+	"social-media-ai-video/models"
 	"sort"
 )
 
@@ -107,6 +109,158 @@ type CommandBuildInput struct {
 type FFmpegCommandBuilder struct{}
 
 func NewFFmpegCommandBuilder() *FFmpegCommandBuilder { return &FFmpegCommandBuilder{} }
+
+// High-level compiler orchestrating schema -> assets -> args
+// Accepts the ai-generated composition JSON and services to resolve audio assets.
+
+type CompositionCompiler struct {
+	builder      *FFmpegCommandBuilder
+	bgMusic      *BackgroundMusic
+	voiceService *ElevenLabsService
+}
+
+func NewCompositionCompiler(builder *FFmpegCommandBuilder, bg *BackgroundMusic, els *ElevenLabsService) *CompositionCompiler {
+	return &CompositionCompiler{builder: builder, bgMusic: bg, voiceService: els}
+}
+
+// Compile takes the AI JSON blob, image paths (ordered by index), a tmpDir and returns ffmpeg args and resolved output paths used.
+func (cc *CompositionCompiler) Compile(jsonBlob []byte, imagePaths []string, tmpDir string, outputPath string) ([]string, string, string, error) {
+	var inst models.VideoCompositionInstance
+	if err := json.Unmarshal(jsonBlob, &inst); err != nil {
+		return nil, "", "", fmt.Errorf("invalid composition json: %v", err)
+	}
+
+	// Map metadata
+	if len(inst.Metadata.Resolution) != 2 {
+		return nil, "", "", fmt.Errorf("invalid resolution in metadata")
+	}
+	meta := CompositionMetadata{
+		TotalDuration: inst.Metadata.TotalDuration,
+		AspectRatio:   AspectRatio(inst.Metadata.AspectRatio),
+		FPS:           inst.Metadata.FPS,
+		Width:         inst.Metadata.Resolution[0],
+		Height:        inst.Metadata.Resolution[1],
+	}
+
+	// Resolve narration via ElevenLabs
+	ttsInput := models.TTSInput{
+		Narrative: models.NarrativeData{
+			Hook:  inst.Narrative.Hook,
+			Story: inst.Narrative.Story,
+			Cta:   inst.Narrative.Cta,
+			Tone:  inst.Narrative.Tone,
+		},
+		Narration: models.NarrationData{
+			Script: mapNarrationScript(inst.Audio.Narration.Script),
+			Voice: models.TTSVoice{
+				VoiceID:   inst.Audio.Narration.Voice.VoiceID,
+				Speed:     inst.Audio.Narration.Voice.Speed,
+				Pitch:     inst.Audio.Narration.Voice.Pitch,
+				Stability: inst.Audio.Narration.Voice.Stability,
+			},
+		},
+	}
+	narrationPath := ""
+	if cc.voiceService != nil {
+		path, _, err := cc.voiceService.GenerateSpeechToTmp(ttsInput, filepath.Join(tmpDir, "tts_audio"))
+		if err != nil {
+			return nil, "", "", fmt.Errorf("tts generation failed: %v", err)
+		}
+		narrationPath = path
+	}
+
+	// Resolve music if enabled
+	musicPath := ""
+	if inst.Audio.Music.Enabled && cc.bgMusic != nil {
+		mf, err := cc.bgMusic.ResolveAndDownload(inst.Audio.Music.TrackID)
+		if err != nil {
+			return nil, "", "", fmt.Errorf("bgm download failed: %v", err)
+		}
+		musicPath = mf.FilePath
+	}
+
+	// Build timeline
+	items, err := mapTimeline(inst.Timeline)
+	if err != nil {
+		return nil, "", "", err
+	}
+
+	args, err := cc.builder.Build(CommandBuildInput{
+		Metadata:   meta,
+		Timeline:   items,
+		ImagePaths: imagePaths,
+		Audio: AudioConfig{
+			NarrationPath:   narrationPath,
+			MusicEnabled:    inst.Audio.Music.Enabled,
+			MusicPath:       musicPath,
+			MusicVolume:     inst.Audio.Music.Volume,
+			NarrationVolume: 1.0,
+		},
+		OutputPath: outputPath,
+	})
+	if err != nil {
+		return nil, "", "", err
+	}
+	return args, narrationPath, musicPath, nil
+}
+
+func mapNarrationScript(in []models.NarrationScriptItem) []models.TTSSegment {
+	out := make([]models.TTSSegment, 0, len(in))
+	for _, s := range in {
+		seg := models.TTSSegment{Text: s.Text, Emphasis: s.Emphasis}
+		if s.Timing != nil {
+			seg.Start = int(s.Timing.Start)
+			seg.End = int(s.Timing.End)
+		}
+		out = append(out, seg)
+	}
+	return out
+}
+
+func mapTimeline(in []models.TimelineItemInstance) ([]TimelineItem, error) {
+	items := make([]TimelineItem, 0, len(in))
+	for _, it := range in {
+		item := TimelineItem{ID: it.ID, StartTime: it.StartTime, Duration: it.Duration}
+		switch it.Type {
+		case "image":
+			var img models.ImageSegmentInstance
+			if err := json.Unmarshal(it.Content, &img); err != nil {
+				return nil, fmt.Errorf("invalid image content in %s: %v", it.ID, err)
+			}
+			item.Type = TimelineItemImage
+			item.Image = &ImageSegmentContent{ImageIndex: img.ImageIndex}
+		case "text_overlay":
+			var tx models.TextOverlayInstance
+			if err := json.Unmarshal(it.Content, &tx); err != nil {
+				return nil, fmt.Errorf("invalid text content in %s: %v", it.ID, err)
+			}
+			item.Type = TimelineItemTextOverlay
+			style := tx.Style
+			fontsize := 12
+			color := ""
+			bg := ""
+			anim := ""
+			if style != nil {
+				fontsize = int(style.FontSize)
+				color = style.Color
+				bg = style.BackgroundColor
+				anim = style.Animation
+			}
+			item.Text = &TextOverlayContent{Text: tx.Text, Position: tx.Position, FontSize: fontsize, ColorHex: color, BackgroundColor: bg, Animation: anim}
+		case "transition":
+			var tr models.TransitionInstance
+			if err := json.Unmarshal(it.Content, &tr); err != nil {
+				return nil, fmt.Errorf("invalid transition content in %s: %v", it.ID, err)
+			}
+			item.Type = TimelineItemTransition
+			item.Trans = &TransitionContent{Effect: tr.Effect, Easing: tr.Easing}
+		default:
+			return nil, fmt.Errorf("unknown timeline type: %s", it.Type)
+		}
+		items = append(items, item)
+	}
+	return items, nil
+}
 
 // Build assembles ffmpeg args for a single-pass render
 // Strategy:
