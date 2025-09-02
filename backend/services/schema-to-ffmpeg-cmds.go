@@ -24,7 +24,7 @@ const (
 // Width/Height must match the selected aspect ratio
 // FPS currently limited to 24 or 30 in the schema
 
-type CompositionProperties.Metadata.Properties struct {
+type Metadata struct {
 	TotalDuration float64
 	AspectRatio   AspectRatio
 	FPS           int
@@ -94,7 +94,7 @@ type AudioConfig struct {
 // CommandBuildInput contains everything needed to construct ffmpeg args
 
 type CommandBuildInput struct {
-	Properties.Metadata.Properties CompositionProperties.Metadata.Properties
+	Metadata Metadata
 	Timeline []TimelineItem
 	// Images referenced by index in timeline (ImageIndex)
 	ImagePaths []string
@@ -137,7 +137,7 @@ func (cc *CompositionCompiler) Compile(jsonBlob []byte, imagePaths []string, tmp
 	if len(vc.Properties.Metadata.Properties.Resolution.OneOf[0].Enum) != 2 {
 		return nil, "", "", fmt.Errorf("invalid resolution in Properties.Metadata.Properties")
 	}
-	meta := CompositionProperties.Metadata.Properties{
+	meta := Metadata{
 		TotalDuration: vc.Properties.Metadata.Properties.TotalDuration,
 		AspectRatio:   AspectRatio(vc.Properties.Metadata.Properties.AspectRatio),
 		FPS:           vc.Properties.Metadata.Properties.FPS,
@@ -164,18 +164,21 @@ func (cc *CompositionCompiler) Compile(jsonBlob []byte, imagePaths []string, tmp
 			},
 		},
 	}
-	narrationPath := ""
+	ttsNarrationPaths := []string{}
 	if cc.voiceService != nil {
-		path, _, err := cc.voiceService.GenerateSpeechToTmp(ttsInput, filepath.Join(tmpDir, "tts_audio"))
+		paths, _, err := cc.voiceService.GenerateSpeechToTmp(ttsInput, filepath.Join(tmpDir, "tts_audio"))
 		if err != nil {
 			return nil, "", "", fmt.Errorf("tts generation failed: %v", err)
 		}
-		narrationPath = path
+		for i := range paths {
+			ttsNarrationPaths = append(ttsNarrationPaths, paths[i])
+		}
 	}
 
 	// Resolve music if enabled
 	musicPath := ""
-	if vc.Audio.Music.Enabled && cc.bgMusic != nil {
+	if vc.Properties.Audio.Properties.Music.Properties.Enabled && cc.bgMusic != nil {
+		//this needs to change; it shouldn't be posting a trackID just a music theming
 		mf, err := cc.bgMusic.ResolveAndDownload(vc.Audio.Music.TrackID)
 		if err != nil {
 			return nil, "", "", fmt.Errorf("bgm download failed: %v", err)
@@ -184,20 +187,38 @@ func (cc *CompositionCompiler) Compile(jsonBlob []byte, imagePaths []string, tmp
 	}
 
 	// Build timeline
-	items, err := mapTimeline(vc.Timeline)
+	//TODO: Still need to make the buisness logic
+	timeline, err := func(tl vc.Properties.Timeline) ([]TimelineItem, error) {
+
+		switch tl.Type {
+		case "image":
+
+		case "text-overlay":
+
+		case "video":
+
+		case "transition"
+
+		case "audio"
+
+		default:
+			return nil, fmt.Errorf("unknown timeline type: %s", timeline.Type)
+
+		}
+	}
 	if err != nil {
 		return nil, "", "", err
 	}
 
 	args, err := cc.builder.Build(CommandBuildInput{
-		Properties.Metadata.Properties:   meta,
-		Timeline:   items,
+		Metadata:   meta,
+		Timeline:   timeline,
 		ImagePaths: imagePaths,
 		Audio: AudioConfig{
 			NarrationPath:   narrationPath,
-			MusicEnabled:    vc.Audio.Music.Enabled,
+			MusicEnabled:    vc.Properties.Audio.Properties.Music.Properties.Enabled,
 			MusicPath:       musicPath,
-			MusicVolume:     vc.Audio.Music.Volume,
+			MusicVolume:     vc.Properties.Audio.Properties.Music.Properties.Volume,
 			NarrationVolume: 1.0,
 		},
 		OutputPath: outputPath,
