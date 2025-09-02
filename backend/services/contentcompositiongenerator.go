@@ -21,37 +21,6 @@ func NewContentGenerator(cfg *config.APIConfig) *ContentGenerator {
 	return &ContentGenerator{config: cfg}
 }
 
-// GenerateVideoComposition creates a structured video composition based on user prompt
-func (cg *ContentGenerator) GenerateVideoComposition(prompt string) (*models.VideoCompositionRequest, error) {
-	//start with a netowrk
-	jsonData, err := json.Marshal(prompt)
-	if err != nil {
-		return nil, fmt.Errorf("failed to marshal prompt: %v", err)
-	}
-	resp, err := http.Post(cg.config.N8NPLEXELSURL, "application/json", bytes.NewBuffer(jsonData))
-	if err != nil {
-		return nil, fmt.Errorf("failed to send request to N8N: %v", err)
-	}
-	defer resp.Body.Close()
-
-	// Debug: print N8N response status and body for verification
-	bodyBytes, readErr := io.ReadAll(resp.Body)
-	if readErr != nil {
-		return nil, fmt.Errorf("failed to read n8n response: %v", readErr)
-	}
-	fmt.Printf("N8N POST %s -> status: %s\n", cg.config.N8NPLEXELSURL, resp.Status)
-	fmt.Printf("N8N response body: %s\n", string(bodyBytes))
-	// Reset body for subsequent JSON decoding
-	resp.Body = io.NopCloser(bytes.NewBuffer(bodyBytes))
-
-	var composition models.VideoCompositionRequest
-	if err := json.NewDecoder(resp.Body).Decode(&composition); err != nil {
-		return nil, fmt.Errorf("failed to decode n8n response: %v", err)
-	}
-	return &composition, nil
-
-}
-
 // GenerateShortVideo posts the prompt to N8N, extracts the returned video id,
 // fetches the short video from the configured base URL, saves it under ./tmp,
 // and returns the saved filename (basename).

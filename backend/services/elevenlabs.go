@@ -30,9 +30,14 @@ func NewElevenLabsService(cfg *config.APIConfig) *ElevenLabsService {
 
 // GenerateSpeechToTmp generates TTS audio and writes it under tmpDir.
 // Returns the absolute output path and the filename.
-func (els *ElevenLabsService) GenerateSpeechToTmp(input models.TTSInput, tmpDir string) (string, string, error) {
-	// Concatenate narrative parts and narration script into one text
+// generates a set of audio files, used for concatenated in ffmpeg
+func (els *ElevenLabsService) GenerateSpeechToTmp(input models.TTSInput, tmpDir string) ([]string, []string, error) {
+	// Buffer for text-to-speech parts
 	var parts []string
+	//exact outpath paths into TmpDir
+	var outputPaths []string
+	//exact filenames; prefixed with elevenlabs_
+	var filenames []string
 	if input.Narrative.Hook != "" {
 		parts = append(parts, input.Narrative.Hook)
 	}
@@ -105,26 +110,5 @@ func (els *ElevenLabsService) GenerateSpeechToTmp(input models.TTSInput, tmpDir 
 		return "", "", fmt.Errorf("failed to save audio file: %v", err)
 	}
 
-	return outputPath, filename, nil
-}
-
-// Backwards-compatible wrapper
-func (els *ElevenLabsService) GenerateSpeech(input models.TTSInput) error {
-	_, _, err := els.GenerateSpeechToTmp(input, "")
-	return err
-}
-
-func MapCompositionToTTSInput(doc models.CompositionDocument) models.TTSInput {
-	return models.TTSInput{
-		Narrative: models.NarrativeData{
-			Hook:  doc.Narrative.Hook,
-			Story: doc.Narrative.Story,
-			Cta:   doc.Narrative.Cta,
-			Tone:  doc.Narrative.Tone,
-		},
-		Narration: models.NarrationData{
-			Script: doc.Audio.Narration.Script,
-			Voice:  doc.Audio.Narration.Voice,
-		},
-	}
+	return outputPaths, filenames, nil
 }
