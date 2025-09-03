@@ -14,7 +14,6 @@ import (
 
 type VideoHandler struct {
 	contentGenerator *services.ContentGenerator
-	videoProcessor   *services.VideoProcessor
 	elevenLabs       *services.ElevenLabsService
 	backgroundMusic  *services.BackgroundMusic
 	ffmpegProcessor  *services.FFmpegCommandBuilder
@@ -23,7 +22,6 @@ type VideoHandler struct {
 func NewVideoHandler(cfg *config.APIConfig) *VideoHandler {
 	return &VideoHandler{
 		contentGenerator: services.NewContentGenerator(cfg),
-		videoProcessor:   services.NewVideoProcessor(),
 		elevenLabs:       services.NewElevenLabsService(cfg),
 		backgroundMusic:  services.NewBackgroundMusic(cfg),
 		ffmpegProcessor:  services.NewFFmpegCommandBuilder(),
@@ -96,6 +94,7 @@ func (vh *VideoHandler) GenerateVideoReels(c *gin.Context) {
 	c.JSON(http.StatusOK, resp)
 }
 
+// this function is currently broken; fix later
 func (vh *VideoHandler) GenerateVideoPexels(c *gin.Context) {
 	// Enforce multipart/form-data only
 	ct := c.GetHeader("Content-Type")
@@ -151,21 +150,4 @@ func (vh *VideoHandler) GenerateVideoPexels(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, resp)
-}
-
-// GetComposition returns the video composition structure for debugging
-func (vh *VideoHandler) GetComposition(c *gin.Context) {
-	prompt := c.Query("prompt")
-	if prompt == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"error": "prompt parameter is required"})
-		return
-	}
-
-	composition, err := vh.contentGenerator.GenerateVideoComposition(prompt)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
-	}
-
-	c.JSON(http.StatusOK, composition)
 }

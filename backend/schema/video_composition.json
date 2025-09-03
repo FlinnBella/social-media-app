@@ -24,8 +24,8 @@
             "description": "Video aspect ratio for different platforms; support for 16:9 and 4:5 later"
           },
           "fps": {
-            "type": "integer",
-            "enum": [24, 30],
+            "type": "string",
+            "enum": ["24", "30"],
             "description": "Frames per second; support for 60 later"
           },
           "resolution": {

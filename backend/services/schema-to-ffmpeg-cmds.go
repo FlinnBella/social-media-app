@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"social-media-ai-video/models"
 	"sort"
+	"strconv"
 )
 
 // Command builder for generating a single ffmpeg invocation from a high-level composition
@@ -13,20 +14,16 @@ import (
 //   exec.Command("ffmpeg", args...)
 // The builder is pure and does not perform any IO.
 
-type AspectRatio string
-
-const (
-	AspectRatio9x16 AspectRatio = "9:16"
-	AspectRatio1x1  AspectRatio = "1:1"
-)
-
 // CompositionProperties.Metadata.Properties captures global video settings
 // Width/Height must match the selected aspect ratio
 // FPS currently limited to 24 or 30 in the schema
 
+// going to need to revamp entire struct models; schema is just for ai, not for mapping
+
+// asp reatio should be limited to 9:16 and 1:1
 type Metadata struct {
-	TotalDuration float64
-	AspectRatio   AspectRatio
+	TotalDuration int
+	AspectRatio   string
 	FPS           int
 	Width         int
 	Height        int
@@ -84,11 +81,11 @@ type TimelineItem struct {
 // AudioConfig holds prepared audio assets
 
 type AudioConfig struct {
-	NarrationPath   string // path to narration (mp3/m4a)
-	MusicEnabled    bool
-	MusicPath       string
-	MusicVolume     float64 // 0..1
-	NarrationVolume float64 // 0..1, if 0 treat as 1.0
+	ttsNarrationPaths []string // path to narration (mp3/m4a)
+	MusicEnabled      bool
+	MusicPath         string
+	MusicVolume       float64 // 0..1
+	NarrationVolume   float64 // 0..1, if 0 treat as 1.0
 }
 
 // CommandBuildInput contains everything needed to construct ffmpeg args
@@ -125,50 +122,57 @@ func NewCompositionCompiler(builder *FFmpegCommandBuilder, bg *BackgroundMusic, 
 	return &CompositionCompiler{builder: builder, bgMusic: bg, voiceService: els}
 }
 
-// Compile takes the AI JSON blob, image paths (ordered by index), a tmpDir and returns ffmpeg args and resolved output paths used.
-func (cc *CompositionCompiler) Compile(jsonBlob []byte, imagePaths []string, tmpDir string, outputPath string) ([]string, string, string, error) {
-	var vc models.VideoCompositionResponseSchema
+type Compilier interface {
+	Compile(jsonBlob []byte, imagePaths []string, tmpDir string, outputPath string) ([]string, []string, string, error)
+}
 
+// Compile takes the AI JSON blob, image paths (ordered by index), a tmpDir and returns ffmpeg args and resolved output paths used.
+func (cc *CompositionCompiler) Compile(jsonBlob []byte, imagePaths []string, tmpDir string, outputPath string) ([]string, []string, string, error) {
+	//schema object
+	var vc models.VideoCompositionResponse
+
+	//jsonBlob should conform to schema, place in vc
 	if err := json.Unmarshal(jsonBlob, &vc); err != nil {
-		return nil, "", "", fmt.Errorf("invalid composition json: %v", err)
+		return nil, []string{}, "", fmt.Errorf("invalid composition json: %v", err)
 	}
 
 	// Map Properties.Metadata.Properties
-	if len(vc.Properties.Metadata.Properties.Resolution.OneOf[0].Enum) != 2 {
-		return nil, "", "", fmt.Errorf("invalid resolution in Properties.Metadata.Properties")
+	if len(vc.Properties.Metadata.Resolution) != 2 {
+		return nil, []string{}, "", fmt.Errorf("invalid resolution in Properties.Metadata.Properties")
+	}
+	fps := 30
+	if vc.Properties.Metadata.Fps != "" {
+		if parsed, err := strconv.Atoi(vc.Properties.Metadata.Fps); err == nil {
+			fps = parsed
+		}
 	}
 	meta := Metadata{
-		TotalDuration: vc.Properties.Metadata.Properties.TotalDuration,
-		AspectRatio:   AspectRatio(vc.Properties.Metadata.Properties.AspectRatio),
-		FPS:           vc.Properties.Metadata.Properties.FPS,
-		Width:         vc.Properties.Metadata.Properties.Resolution[0],
-		Height:        vc.Properties.Metadata.Properties.Resolution[1],
+		TotalDuration: vc.Properties.Metadata.TotalDuration,
+		AspectRatio:   vc.Properties.Metadata.AspectRatio,
+		FPS:           fps,
+		Width:         vc.Properties.Metadata.Resolution[0],
+		Height:        vc.Properties.Metadata.Resolution[1],
 	}
 
 	// Resolve narration via ElevenLabs
 	ttsInput := models.TTSInput{
 		Narrative: models.NarrativeData{
-			Hook:  vc.Properties.Narrative.Properties.Hook,
-			Story: vc.Properties.Narrative.Properties.Story,
-			Cta:   vc.Properties.Narrative.Properties.Cta,
-			Tone:  vc.Properties.Narrative.Properties.Tone,
+			Hook:  vc.Narrative.Hook,
+			Story: vc.Narrative.Story,
+			Cta:   vc.Narrative.Cta,
+			Tone:  vc.Narrative.Tone,
 		},
 		Narration: models.NarrationData{
-			//nah I don't like this shit
-			Script: mapNarrationScript(vc.Properties.Audio.Properties.Narration.Script),
-			Voice: models.TTSVoice{
-				VoiceID:   vc.Audio.Narration.Voice.VoiceID,
-				Speed:     vc.Audio.Narration.Voice.Speed,
-				Pitch:     vc.Audio.Narration.Voice.Pitch,
-				Stability: vc.Audio.Narration.Voice.Stability,
-			},
+			Script: mapNarrationScript(vc.Audio.Narration.Script),
+			Voice:  vc.Audio.Narration.Voice,
 		},
 	}
 	ttsNarrationPaths := []string{}
 	if cc.voiceService != nil {
+		//voice service sppech generation
 		paths, _, err := cc.voiceService.GenerateSpeechToTmp(ttsInput, filepath.Join(tmpDir, "tts_audio"))
 		if err != nil {
-			return nil, "", "", fmt.Errorf("tts generation failed: %v", err)
+			return nil, nil, "", fmt.Errorf("tts generation failed: %v", err)
 		}
 		for i := range paths {
 			ttsNarrationPaths = append(ttsNarrationPaths, paths[i])
@@ -177,37 +181,60 @@ func (cc *CompositionCompiler) Compile(jsonBlob []byte, imagePaths []string, tmp
 
 	// Resolve music if enabled
 	musicPath := ""
-	if vc.Properties.Audio.Properties.Music.Properties.Enabled && cc.bgMusic != nil {
+	if vc.Audio.Music.Enabled && cc.bgMusic != nil {
 		//this needs to change; it shouldn't be posting a trackID just a music theming
 		mf, err := cc.bgMusic.ResolveAndDownload(vc.Audio.Music.TrackID)
 		if err != nil {
-			return nil, "", "", fmt.Errorf("bgm download failed: %v", err)
+			return nil, nil, "", fmt.Errorf("bgm download failed: %v", err)
 		}
 		musicPath = mf.FilePath
 	}
 
-	// Build timeline
-	//TODO: Still need to make the buisness logic
-	timeline, err := func(tl vc.Properties.Timeline) ([]TimelineItem, error) {
-
-		switch tl.Type {
-		case "image":
-
-		case "text-overlay":
-
-		case "video":
-
-		case "transition"
-
-		case "audio"
-
-		default:
-			return nil, fmt.Errorf("unknown timeline type: %s", timeline.Type)
-
+	// Build timeline from vc.Timeline slice
+	timeline, err := func() ([]TimelineItem, error) {
+		out := make([]TimelineItem, 0, len(vc.Timeline))
+		imageIdx := 0
+		for _, it := range vc.Timeline {
+			switch it.Type {
+			case "image":
+				out = append(out, TimelineItem{
+					ID:        it.ID,
+					StartTime: float64(it.StartTime),
+					Duration:  float64(it.Duration),
+					Type:      TimelineItemImage,
+					Image:     &ImageSegmentContent{ImageIndex: imageIdx},
+				})
+				imageIdx++
+			case "text_overlay":
+				out = append(out, TimelineItem{
+					ID:        it.ID,
+					StartTime: float64(it.StartTime),
+					Duration:  float64(it.Duration),
+					Type:      TimelineItemTextOverlay,
+					Text: &TextOverlayContent{
+						Text:      it.Content,
+						Position:  "center",
+						FontSize:  24,
+						ColorHex:  "white",
+						Animation: "none",
+					},
+				})
+			case "transition":
+				out = append(out, TimelineItem{
+					ID:        it.ID,
+					StartTime: float64(it.StartTime),
+					Duration:  float64(it.Duration),
+					Type:      TimelineItemTransition,
+					Trans:     &TransitionContent{Effect: "cut", Easing: "linear"},
+				})
+			default:
+				// ignore unsupported types for now
+			}
 		}
-	}
+		return out, nil
+	}()
 	if err != nil {
-		return nil, "", "", err
+		return nil, []string{}, "", err
 	}
 
 	args, err := cc.builder.Build(CommandBuildInput{
@@ -215,18 +242,18 @@ func (cc *CompositionCompiler) Compile(jsonBlob []byte, imagePaths []string, tmp
 		Timeline:   timeline,
 		ImagePaths: imagePaths,
 		Audio: AudioConfig{
-			NarrationPath:   narrationPath,
-			MusicEnabled:    vc.Properties.Audio.Properties.Music.Properties.Enabled,
-			MusicPath:       musicPath,
-			MusicVolume:     vc.Properties.Audio.Properties.Music.Properties.Volume,
-			NarrationVolume: 1.0,
+			ttsNarrationPaths: ttsNarrationPaths,
+			MusicEnabled:      vc.Audio.Music.Enabled,
+			MusicPath:         musicPath,
+			MusicVolume:       vc.Audio.Music.Volume,
+			NarrationVolume:   1.0,
 		},
 		OutputPath: outputPath,
 	})
 	if err != nil {
-		return nil, "", "", err
+		return nil, []string{}, "", err
 	}
-	return args, narrationPath, musicPath, nil
+	return args, ttsNarrationPaths, musicPath, nil
 }
 
 func mapNarrationScript(in []models.NarrationScriptItem) []models.TTSSegment {
@@ -242,62 +269,9 @@ func mapNarrationScript(in []models.NarrationScriptItem) []models.TTSSegment {
 	return out
 }
 
-func mapTimeline(in []models.TimelineItemvcance) ([]TimelineItem, error) {
-	items := make([]TimelineItem, 0, len(in))
-	for _, it := range in {
-		item := TimelineItem{ID: it.ID, StartTime: it.StartTime, Duration: it.Duration}
-		switch it.Type {
-		case "image":
-			var img models.ImageSegmentvcance
-			if err := json.Unmarshal(it.Content, &img); err != nil {
-				return nil, fmt.Errorf("invalid image content in %s: %v", it.ID, err)
-			}
-			item.Type = TimelineItemImage
-			item.Image = &ImageSegmentContent{ImageIndex: img.ImageIndex}
-		case "text_overlay":
-			var tx models.TextOverlayvcance
-			if err := json.Unmarshal(it.Content, &tx); err != nil {
-				return nil, fmt.Errorf("invalid text content in %s: %v", it.ID, err)
-			}
-			item.Type = TimelineItemTextOverlay
-			style := tx.Style
-			fontsize := 12
-			color := ""
-			bg := ""
-			anim := ""
-			if style != nil {
-				fontsize = int(style.FontSize)
-				color = style.Color
-				bg = style.BackgroundColor
-				anim = style.Animation
-			}
-			item.Text = &TextOverlayContent{Text: tx.Text, Position: tx.Position, FontSize: fontsize, ColorHex: color, BackgroundColor: bg, Animation: anim}
-		case "transition":
-			var tr models.Transitionvcance
-			if err := json.Unmarshal(it.Content, &tr); err != nil {
-				return nil, fmt.Errorf("invalid transition content in %s: %v", it.ID, err)
-			}
-			item.Type = TimelineItemTransition
-			item.Trans = &TransitionContent{Effect: tr.Effect, Easing: tr.Easing}
-		default:
-			return nil, fmt.Errorf("unknown timeline type: %s", it.Type)
-		}
-		items = append(items, item)
-	}
-	return items, nil
-}
-
-// Build assembles ffmpeg args for a single-pass render
-// Strategy:
-// - Provide all images as inputs (-loop 1 -t duration per item not needed if we use filter timeline)
-// - We use filter_complex to scale to canvas WxH, pad as needed, compose overlays, and concatenate segments
-// - For simplicity, we convert each image item into a video stream with fps, scale, and setpts to absolute timeline using trim + setpts
-// - Text overlays are applied on top of the base track within the time window using enable='between(t, start, end)'
-// - Transitions currently support fade and cut; others map to cut for MVP
-// - Audio: mix narration and BGM (if enabled) with volumes, map to output
 func (b *FFmpegCommandBuilder) Build(in CommandBuildInput) ([]string, error) {
-	if in.Properties.Metadata.Properties.Width <= 0 || in.Properties.Metadata.Properties.Height <= 0 || in.Properties.Metadata.Properties.FPS <= 0 {
-		return nil, fmt.Errorf("invalid Properties.Metadata.Properties: width/height/fps must be > 0")
+	if in.Metadata.Width <= 0 || in.Metadata.Height <= 0 || in.Metadata.FPS <= 0 {
+		return nil, fmt.Errorf("invalid metadata: width/height/fps must be > 0")
 	}
 	if in.OutputPath == "" {
 		return nil, fmt.Errorf("missing output path")
@@ -329,12 +303,14 @@ func (b *FFmpegCommandBuilder) Build(in CommandBuildInput) ([]string, error) {
 	// Audio inputs appended at the end so index math is predictable
 	numImageInputs := len(in.ImagePaths)
 	audioInputStart := numImageInputs
-	if in.Audio.NarrationPath != "" {
-		args = append(args, "-i", in.Audio.NarrationPath)
+	var narrationPath string
+	if len(in.Audio.ttsNarrationPaths) > 0 {
+		narrationPath = in.Audio.ttsNarrationPaths[0]
+		args = append(args, "-i", narrationPath)
 	}
 	musicIdx := -1
 	narrIdx := -1
-	if in.Audio.NarrationPath != "" {
+	if narrationPath != "" {
 		narrIdx = audioInputStart
 		if in.Audio.MusicEnabled && in.Audio.MusicPath != "" {
 			musicIdx = audioInputStart + 1
@@ -372,7 +348,7 @@ func (b *FFmpegCommandBuilder) Build(in CommandBuildInput) ([]string, error) {
 		// Use loop filter to make image into frames: loop=loop=FPS*duration:size=1:start=0, fps=FPS
 		// We'll use: scale=W:H:force_original_aspect_ratio=decrease, pad=W:H:(ow-iw)/2:(oh-ih)/2,format=yuv420p
 		filter += fmt.Sprintf("%s scale=%d:%d:force_original_aspect_ratio=decrease,pad=%d:%d:(ow-iw)/2:(oh-ih)/2,format=yuv420p,fps=%d,trim=duration=%f,setpts=PTS-STARTPTS %s;",
-			labelIn, in.Properties.Metadata.Properties.Width, in.Properties.Metadata.Properties.Height, in.Properties.Metadata.Properties.Width, in.Properties.Metadata.Properties.Height, in.Properties.Metadata.Properties.FPS, t.Duration, labelOut)
+			labelIn, in.Metadata.Width, in.Metadata.Height, in.Metadata.Width, in.Metadata.Height, in.Metadata.FPS, t.Duration, labelOut)
 		imageStreamCount++
 	}
 
@@ -396,7 +372,7 @@ func (b *FFmpegCommandBuilder) Build(in CommandBuildInput) ([]string, error) {
 			continue
 		}
 		text := escapeDrawtext(t.Text.Text)
-		xy := positionXY(t.Text.Position, in.Properties.Metadata.Properties.Width, in.Properties.Metadata.Properties.Height)
+		xy := positionXY(t.Text.Position, in.Metadata.Width, in.Metadata.Height)
 		bg := ""
 		if t.Text.BackgroundColor != "" {
 			bg = fmt.Sprintf(":box=1:boxcolor=%s@0.6", t.Text.BackgroundColor)
@@ -448,8 +424,8 @@ func (b *FFmpegCommandBuilder) Build(in CommandBuildInput) ([]string, error) {
 
 	// Output settings
 	args = append(args,
-		"-r", fmt.Sprintf("%d", in.Properties.Metadata.Properties.FPS),
-		"-s", fmt.Sprintf("%dx%d", in.Properties.Metadata.Properties.Width, in.Properties.Metadata.Properties.Height),
+		"-r", fmt.Sprintf("%d", in.Metadata.FPS),
+		"-s", fmt.Sprintf("%dx%d", in.Metadata.Width, in.Metadata.Height),
 		"-c:v", "libx264",
 		"-pix_fmt", "yuv420p",
 		"-preset", "fast",

@@ -32,7 +32,7 @@ func main() {
 	{
 		api.POST("/generate-video-pexels", videoHandler.GenerateVideoPexels)
 		api.POST("/generate-video-reels", videoHandler.GenerateVideoReels)
-		api.GET("/composition", videoHandler.GetComposition)
+		//api.GET("/composition", videoHandler.GetComposition)
 	}
 
 	// Serve static files from ./tmp at /static

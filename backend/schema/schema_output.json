@@ -1,0 +1,227 @@
+
+    {
+    "action": 
+    "parse",
+    "response": 
+    {
+    "output": 
+    {
+    "metadata": 
+    {
+    "totalDuration": 
+    30,
+    "aspectRatio": 
+    "16:9",
+    "fps": 
+    "30"
+    },
+    "theme": 
+    {
+    "style": 
+    "playful",
+    "mood": 
+    "friendly",
+    "colorPalette": 
+    {
+    "primary": 
+    "#4CAF50",
+    "secondary": 
+    "#795548",
+    "accent": 
+    "#FF9800",
+    "grading": 
+    "vibrant"
+    },
+    "typography": 
+    {
+    "fontFamily": 
+    "Montserrat",
+    "textStyle": 
+    "regular"
+    }
+    },
+    "narrative": 
+    {
+    "hook": 
+    "Watch this furry friend unleash pure joy!",
+"story":[
+"Leaping over logs and through leaves with boundless energy.",
+"Every jump is a celebration of freedom and fun."
+],
+"cta": 
+"Bring this joy to your day!",
+"tone": 
+"enthusiastic"
+},
+"timeline": 
+[
+{
+"id": 
+"scene1_img",
+"startTime": 
+0,
+"duration": 
+8,
+"type": 
+"image",
+"content": 
+"dog running in woods"
+},
+{
+"id": 
+"text1",
+"startTime": 
+1,
+"duration": 
+4,
+"type": 
+"text_overlay",
+"content": 
+"Unleash the Fun!"
+},
+
+"type": 
+"image",
+"content": 
+"dog jumping over a log"
+},
+{
+"id": 
+"text2",
+"startTime": 
+9,
+"duration": 
+4,
+"type": 
+"text_overlay",
+"content": 
+"Pure Joy in Every Leap!"
+},
+{
+"id": 
+"scene3_img",
+"startTime": 
+18,
+"duration": 
+12,
+"type": 
+"image",
+"content": 
+"dog happily exploring the forest"
+},
+{
+"id": 
+"text3",
+"startTime": 
+19,
+"duration": 
+4,
+"type": 
+"text_overlay",
+"content": 
+"Adventure Awaits!"
+},
+
+{
+    "id": 
+    "text4_cta",
+    "startTime": 
+    26,
+    "duration": 
+    4,
+    "type": 
+    "text_overlay",
+    "content": 
+    "Find Your Own Adventure!"
+    }
+    ],
+    "audio": 
+    {
+    "narration": 
+    {
+    "script": 
+    [
+    {
+    "text": 
+    "Meet our adventurous pup, ready to explore the great outdoors!",
+    "timing": 
+    {
+    "start": 
+    0,
+    "end": 
+    5
+    },
+    "emphasis": 
+    "normal"
+    },
+    {
+    "text": 
+    "With every leap and bound, a burst of pure happiness fills the air.",
+    "timing": 
+    {
+    "start": 
+    5,
+
+"end": 
+12
+},
+"emphasis": 
+"normal"
+},
+{
+"text": 
+"The sun-dappled woods are their playground, full of endless discoveries.",
+"timing": 
+{
+"start": 
+12,
+"end": 
+20
+},
+"emphasis": 
+"normal"
+},
+{
+"text": 
+"Join the adventure, and let your spirit soar with our furry friend!",
+"timing": 
+{
+"start": 
+20,
+"end": 
+30
+},
+"emphasis": 
+"normal"
+}
+],
+"voice": 
+{
+"speed": 
+1,
+"pitch": 
+1,
+"stability": 
+0.75
+
+}
+},
+"music": 
+{
+"enabled": 
+true,
+"genre": 
+"upbeat",
+"mood": 
+"energetic",
+"volume": 
+0.3,
+"fadeIn": 
+1,
+"fadeOut": 
+2
+}
+}
+}
+}
+}
