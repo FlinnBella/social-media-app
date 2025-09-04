@@ -75,17 +75,11 @@
               "urgent", "sophisticated", "friendly", "authoritative"
             ]
           },
-          "colorPalette": {
-            "type": "object",
-            "additionalProperties": false,
-            "properties": {
               "grading": {
                 "type": "string",
                 "enum": ["warm", "cool", "vibrant", "muted", "high-contrast", "soft"],
                 "description": "Color grading style to apply"
-              }
-            }
-          },
+              },
           "typography": {
             "type": "object",
             "additionalProperties": false,
