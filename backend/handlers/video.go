@@ -1,30 +1,38 @@
 package handlers
 
 import (
+	"bytes"
 	"fmt"
+	"strings"
+
 	"io"
 	"net/http"
+
+	"os"
+	"path/filepath"
+
 	"social-media-ai-video/config"
 	"social-media-ai-video/models"
 	"social-media-ai-video/services"
-	"strings"
 
 	"github.com/gin-gonic/gin"
 )
 
 type VideoHandler struct {
+	cfg              *config.APIConfig
 	contentGenerator *services.ContentGenerator
 	elevenLabs       *services.ElevenLabsService
 	backgroundMusic  *services.BackgroundMusic
-	ffmpegProcessor  *services.FFmpegCommandBuilder
+	ffmpegCompiler   *services.CompositionCompiler
 }
 
 func NewVideoHandler(cfg *config.APIConfig) *VideoHandler {
 	return &VideoHandler{
+		cfg:              cfg,
 		contentGenerator: services.NewContentGenerator(cfg),
 		elevenLabs:       services.NewElevenLabsService(cfg),
 		backgroundMusic:  services.NewBackgroundMusic(cfg),
-		ffmpegProcessor:  services.NewFFmpegCommandBuilder(),
+		ffmpegCompiler:   services.NewCompositionCompiler(services.NewFFmpegCommandBuilder(), services.NewBackgroundMusic(cfg), services.NewElevenLabsService(cfg)),
 	}
 }
 
@@ -39,15 +47,17 @@ func (vh *VideoHandler) GenerateVideoReels(c *gin.Context) {
 		return
 	}
 
-	prompt := c.PostForm("prompt")
-	if prompt == "" {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"error":  "Prompt is required",
-			"status": "error",
-		})
+	// Buffer the original request body so we can both parse and forward it
+	origBody, readErr := io.ReadAll(c.Request.Body)
+	if readErr != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": fmt.Sprintf("failed to read request body: %v", readErr)})
 		return
 	}
 
+	//reset request body
+	c.Request.Body = io.NopCloser(bytes.NewReader(origBody))
+
+	// Parse incoming multipart form to extract and save images locally
 	form, err := c.MultipartForm()
 	if err != nil || form == nil {
 		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "invalid multipart form"})
@@ -59,39 +69,83 @@ func (vh *VideoHandler) GenerateVideoReels(c *gin.Context) {
 		return
 	}
 
-	// vr creates the initial chat object (prompt & images) upload that's sent to n8n
-	//n8n takes that and returns the a content schema outline to create.
+	imageTmpDir := filepath.Join(os.TempDir(), "reels_images")
+	if err := os.MkdirAll(imageTmpDir, 0o755); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": fmt.Sprintf("failed to create temp dir: %v", err)})
+		return
+	}
 
-	vr := models.VideoGenerationRequest{Prompt: prompt, Source: models.VideoSourceReels}
-	for _, fh := range files {
+	var localImagePaths []string
+	for idx, fh := range files {
 		src, err := fh.Open()
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": fmt.Sprintf("failed to open uploaded file: %v", err)})
 			return
 		}
-		b, err := io.ReadAll(src)
-		src.Close()
+		defer src.Close()
+
+		basename := fmt.Sprintf("%03d_%s", idx, fh.Filename)
+		localPath := filepath.Join(imageTmpDir, basename)
+		out, err := os.Create(localPath)
 		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": fmt.Sprintf("failed to read uploaded file: %v", err)})
+			c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": fmt.Sprintf("failed to create temp image file: %v", err)})
 			return
 		}
-		vr.Images = append(vr.Images, b)
-		vr.ImageNames = append(vr.ImageNames, fh.Filename)
+		if _, err := io.Copy(out, src); err != nil {
+			out.Close()
+			c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": fmt.Sprintf("failed to write temp image file: %v", err)})
+			return
+		}
+		out.Close()
+		localImagePaths = append(localImagePaths, localPath)
 	}
 
-	//response object is the video_composition object
-	resp, svcErr := vh.contentGenerator.GenerateVideoSchemaMultipart(vr)
-	if svcErr != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": svcErr.Error()})
+	// Forward the original multipart body to N8N Reels webhook without rebuilding
+	targetURL := vh.cfg.N8NREELSURL
+	if targetURL == "" {
+		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": "N8N Reels URL not configured"})
 		return
 	}
 
-	//need to take parts of the response object, and pass them through multiple services
-	//ffmpeg-processor will via function calls generate tts, music,
-	//have references to all filepaths+names+data,
-	//and compose images based on that
+	req, err := http.NewRequest("POST", targetURL, bytes.NewReader(origBody))
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": fmt.Sprintf("failed to create upstream request: %v", err)})
+		return
+	}
+	// Preserve the original Content-Type with boundary
+	req.Header.Set("Content-Type", ct)
 
-	c.JSON(http.StatusOK, resp)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"status": "error", "error": fmt.Sprintf("upstream request failed: %v", err)})
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		upstreamBody, _ := io.ReadAll(resp.Body)
+		c.JSON(http.StatusBadGateway, gin.H{
+			"status": "error",
+			"error":  fmt.Sprintf("upstream %s: %s", resp.Status, string(upstreamBody)),
+		})
+		return
+	}
+
+	// Read upstream JSON response body
+	respBytes, readUpErr := io.ReadAll(resp.Body)
+	if readUpErr != nil {
+		c.JSON(http.StatusBadGateway, gin.H{"status": "error", "error": fmt.Sprintf("failed to read upstream response: %v", readUpErr)})
+		return
+	}
+
+	// Compile with AI schema blob and local image paths
+	args, paths, outputPath, err := vh.ffmpegCompiler.Compile(respBytes, localImagePaths)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"args": args, "paths": paths, "outputPath": outputPath})
 }
 
 // this function is currently broken; fix later

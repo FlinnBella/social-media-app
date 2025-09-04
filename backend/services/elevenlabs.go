@@ -31,13 +31,13 @@ func NewElevenLabsService(cfg *config.APIConfig) *ElevenLabsService {
 // GenerateSpeechToTmp generates TTS audio and writes it under tmpDir.
 // Returns the absolute output path and the filename.
 // generates a set of audio files, used for concatenated in ffmpeg
-func (els *ElevenLabsService) GenerateSpeechToTmp(input models.TTSInput, tmpDir string) ([]string, []string, error) {
+func (els *ElevenLabsService) GenerateSpeechToTmp(input models.TTSInput, tmpDir string) (filenames []string, fileoutputmap map[string]string, err error) {
 	// Buffer for text-to-speech parts
 	var parts []string
 	//exact outpath paths into TmpDir
-	var outputPaths []string
 	//exact filenames; prefixed with elevenlabs_
-	var filenames []string
+	var flnames []string
+	var filetomap map[string]string
 	if input.Narrative.Hook != "" {
 		parts = append(parts, input.Narrative.Hook)
 	}
@@ -66,13 +66,13 @@ func (els *ElevenLabsService) GenerateSpeechToTmp(input models.TTSInput, tmpDir 
 
 	jsonData, err := json.Marshal(payload)
 	if err != nil {
-		return []string{}, []string{}, fmt.Errorf("failed to marshal TTS request: %v", err)
+		return []string{}, map[string]string{}, fmt.Errorf("failed to marshal TTS request: %v", err)
 	}
 
 	url := fmt.Sprintf("%s/text-to-speech/%s", els.config.ElevenLabsBaseURL, input.Narration.Voice.VoiceID)
 	req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonData))
 	if err != nil {
-		return []string{}, []string{}, fmt.Errorf("failed to create TTS request: %v", err)
+		return []string{}, map[string]string{}, fmt.Errorf("failed to create TTS request: %v", err)
 	}
 
 	req.Header.Set("Accept", "audio/mpeg")
@@ -82,33 +82,34 @@ func (els *ElevenLabsService) GenerateSpeechToTmp(input models.TTSInput, tmpDir 
 	client := &http.Client{}
 	resp, err := client.Do(req)
 	if err != nil {
-		return []string{}, []string{}, fmt.Errorf("failed to make TTS request: %v", err)
+		return []string{}, map[string]string{}, fmt.Errorf("failed to make TTS request: %v", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		return []string{}, []string{}, fmt.Errorf("TTS API returned status %d: %s", resp.StatusCode, string(body))
+		return []string{}, map[string]string{}, fmt.Errorf("TTS API returned status %d: %s", resp.StatusCode, string(body))
 	}
 
 	if tmpDir == "" {
 		tmpDir = filepath.Join(os.TempDir(), "tts_audio")
 	}
 	if err := os.MkdirAll(tmpDir, 0o755); err != nil {
-		return []string{}, []string{}, fmt.Errorf("failed to create temp dir: %v", err)
+		return []string{}, map[string]string{}, fmt.Errorf("failed to create temp dir: %v", err)
 	}
 	filename := fmt.Sprintf("audio_%d.mp3", time.Now().UnixNano())
 	outputPath := filepath.Join(tmpDir, filename)
 	file, err := os.Create(outputPath)
 	if err != nil {
-		return []string{}, []string{}, fmt.Errorf("failed to create audio file: %v", err)
+		return []string{}, map[string]string{}, fmt.Errorf("failed to create audio file: %v", err)
 	}
 	defer file.Close()
 
 	_, err = io.Copy(file, resp.Body)
 	if err != nil {
-		return []string{}, []string{}, fmt.Errorf("failed to save audio file: %v", err)
+		return []string{}, map[string]string{}, fmt.Errorf("failed to save audio file: %v", err)
 	}
+	filetomap[filename] = outputPath
 
-	return outputPaths, filenames, nil
+	return flnames, filetomap, nil
 }

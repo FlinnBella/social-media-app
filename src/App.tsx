@@ -38,8 +38,8 @@ function App() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
-    if (!inputText.trim() && selectedFiles.length === 0) 
-      {return toast.error('Please enter a prompt or upload a file');};
+    if (!inputText.trim() || selectedFiles.length === 0) 
+      {return toast.error('Please enter a prompt and upload a file');};
 
     const userMessage: Message = {
       id: Date.now().toString(),
@@ -57,7 +57,15 @@ function App() {
       for (const file of selectedFiles) {
         formData.append('image', file, file.name);
       }
-      const response = await fetch('http://localhost:8080/api/generate-video-pexels', {
+      // Verify the FormData content
+for (const [key, value] of formData.entries()) {
+  if (value instanceof File) {
+    console.log(key, { name: value.name, type: value.type, size: value.size });
+  } else {
+    console.log(key, value);
+  }
+}
+    const response = await fetch('http://localhost:8080/api/generate-video-reels', {
         method: 'POST',
         body: formData,
       });
@@ -120,6 +128,7 @@ function App() {
       }
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Failed to generate video');
+      console.error(error);
       const errorMessage: Message = {
         id: (Date.now() + 1).toString(),
         type: 'assistant',

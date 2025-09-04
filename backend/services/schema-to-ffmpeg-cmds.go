@@ -3,10 +3,12 @@ package services
 import (
 	"encoding/json"
 	"fmt"
+	"os"
 	"path/filepath"
 	"social-media-ai-video/models"
 	"sort"
 	"strconv"
+	"time"
 )
 
 // Command builder for generating a single ffmpeg invocation from a high-level composition
@@ -123,17 +125,17 @@ func NewCompositionCompiler(builder *FFmpegCommandBuilder, bg *BackgroundMusic, 
 }
 
 type Compilier interface {
-	Compile(jsonBlob []byte, imagePaths []string, tmpDir string, outputPath string) ([]string, []string, string, error)
+	Compile(jsonAISchemaBlob []byte, imagePaths []string) ([]string, []string, string, error)
 }
 
-// Compile takes the AI JSON blob, image paths (ordered by index), a tmpDir and returns ffmpeg args and resolved output paths used.
-func (cc *CompositionCompiler) Compile(jsonBlob []byte, imagePaths []string, tmpDir string, outputPath string) ([]string, []string, string, error) {
+// Compile takes the AI JSON blob and image paths (ordered by index) and returns ffmpeg args and resolved output paths used.
+func (cc *CompositionCompiler) Compile(jsonAISchemaBlob []byte, imagePaths []string) ([]string, []string, string, error) {
 	//schema object
 	var vc models.VideoCompositionResponse
 
-	//jsonBlob should conform to schema, place in vc
-	if err := json.Unmarshal(jsonBlob, &vc); err != nil {
-		return nil, []string{}, "", fmt.Errorf("invalid composition json: %v", err)
+	//jsonAISchemaBlob should conform to schema, place in vc
+	if err := json.Unmarshal(jsonAISchemaBlob, &vc); err != nil {
+		return nil, []string{}, "", fmt.Errorf("invalid composition json: %v. Given json: %s", err, string(jsonAISchemaBlob))
 	}
 
 	// Map Properties.Metadata.Properties
@@ -169,14 +171,17 @@ func (cc *CompositionCompiler) Compile(jsonBlob []byte, imagePaths []string, tmp
 	}
 	ttsNarrationPaths := []string{}
 	if cc.voiceService != nil {
-		//voice service sppech generation
-		paths, _, err := cc.voiceService.GenerateSpeechToTmp(ttsInput, filepath.Join(tmpDir, "tts_audio"))
+		// Ensure a tmp dir for TTS
+		ttsDir := filepath.Join(os.TempDir(), "tts_audio")
+		if err := os.MkdirAll(ttsDir, 0o755); err != nil {
+			return nil, nil, "", fmt.Errorf("failed to create tts tmp dir: %v", err)
+		}
+		paths, _, err := cc.voiceService.GenerateSpeechToTmp(ttsInput, ttsDir)
 		if err != nil {
 			return nil, nil, "", fmt.Errorf("tts generation failed: %v", err)
 		}
-		for i := range paths {
-			ttsNarrationPaths = append(ttsNarrationPaths, paths[i])
-		}
+		ttsNarrationPaths = append(ttsNarrationPaths, paths...)
+
 	}
 
 	// Resolve music if enabled
@@ -237,6 +242,9 @@ func (cc *CompositionCompiler) Compile(jsonBlob []byte, imagePaths []string, tmp
 		return nil, []string{}, "", err
 	}
 
+	// Auto-generate an output path under the OS temp directory
+	autoOutput := filepath.Join(os.TempDir(), fmt.Sprintf("short_%d.mp4", time.Now().UnixNano()))
+
 	args, err := cc.builder.Build(CommandBuildInput{
 		Metadata:   meta,
 		Timeline:   timeline,
@@ -248,12 +256,12 @@ func (cc *CompositionCompiler) Compile(jsonBlob []byte, imagePaths []string, tmp
 			MusicVolume:       vc.Audio.Music.Volume,
 			NarrationVolume:   1.0,
 		},
-		OutputPath: outputPath,
+		OutputPath: autoOutput,
 	})
 	if err != nil {
 		return nil, []string{}, "", err
 	}
-	return args, ttsNarrationPaths, musicPath, nil
+	return args, ttsNarrationPaths, autoOutput, nil
 }
 
 func mapNarrationScript(in []models.NarrationScriptItem) []models.TTSSegment {
@@ -290,6 +298,18 @@ func (b *FFmpegCommandBuilder) Build(in CommandBuildInput) ([]string, error) {
 	sorted := make([]TimelineItem, len(in.Timeline))
 	copy(sorted, in.Timeline)
 	sort.Slice(sorted, func(i, j int) bool { return sorted[i].StartTime < sorted[j].StartTime })
+
+	// Require at least one image segment
+	hasImage := false
+	for _, t := range sorted {
+		if t.Type == TimelineItemImage {
+			hasImage = true
+			break
+		}
+	}
+	if !hasImage {
+		return nil, fmt.Errorf("no image segments present; image inputs are required")
+	}
 
 	// Input list: images + audio(s)
 	args := []string{"-y"}
