@@ -38,29 +38,22 @@ func (els *ElevenLabsService) GenerateSpeechToTmp(input models.TTSInput, tmpDir 
 	//exact filenames; prefixed with elevenlabs_
 	var flnames []string
 	var filetomap map[string]string
-	if input.Narrative.Hook != "" {
-		parts = append(parts, input.Narrative.Hook)
-	}
-	if len(input.Narrative.Story) > 0 {
-		parts = append(parts, strings.Join(input.Narrative.Story, " "))
-	}
-	if input.Narrative.Cta != "" {
-		parts = append(parts, input.Narrative.Cta)
-	}
-	for _, seg := range input.Narration.Script {
+
+	for _, seg := range input.TextInput {
 		if strings.TrimSpace(seg.Text) != "" {
 			parts = append(parts, seg.Text)
 		}
 	}
+
 	text := strings.Join(parts, " ")
 
 	payload := TTSRequest{
 		Text:    text,
 		ModelID: "eleven_monolingual_v1",
 		VoiceSettings: map[string]interface{}{
-			"stability":        input.Narration.Voice.Stability,
+			"stability":        input.VoiceSettings.Stability,
 			"similarity_boost": 0.5,
-			"speed":            input.Narration.Voice.Speed,
+			"speed":            input.VoiceSettings.Speed,
 		},
 	}
 
@@ -69,7 +62,10 @@ func (els *ElevenLabsService) GenerateSpeechToTmp(input models.TTSInput, tmpDir 
 		return []string{}, map[string]string{}, fmt.Errorf("failed to marshal TTS request: %v", err)
 	}
 
-	url := fmt.Sprintf("%s/text-to-speech/%s", els.config.ElevenLabsBaseURL, input.Narration.Voice.VoiceID)
+	// For now, hardcode the voice ID
+	voiceId := "tvWD4i07Hg5L4uEvbxYV"
+
+	url := fmt.Sprintf("%s/text-to-speech/%s", els.config.ElevenLabsBaseURL, voiceId)
 	req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonData))
 	if err != nil {
 		return []string{}, map[string]string{}, fmt.Errorf("failed to create TTS request: %v", err)
@@ -91,12 +87,22 @@ func (els *ElevenLabsService) GenerateSpeechToTmp(input models.TTSInput, tmpDir 
 		return []string{}, map[string]string{}, fmt.Errorf("TTS API returned status %d: %s", resp.StatusCode, string(body))
 	}
 
+	/*
+		GUARDS
+
+	*/
 	if tmpDir == "" {
-		tmpDir = filepath.Join(os.TempDir(), "tts_audio")
+		return []string{}, map[string]string{}, fmt.Errorf("tmpDir is empty")
 	}
 	if err := os.MkdirAll(tmpDir, 0o755); err != nil {
 		return []string{}, map[string]string{}, fmt.Errorf("failed to create temp dir: %v", err)
 	}
+
+	/*
+		GUARDS
+
+	*/
+
 	filename := fmt.Sprintf("audio_%d.mp3", time.Now().UnixNano())
 	outputPath := filepath.Join(tmpDir, filename)
 	file, err := os.Create(outputPath)
@@ -111,5 +117,6 @@ func (els *ElevenLabsService) GenerateSpeechToTmp(input models.TTSInput, tmpDir 
 	}
 	filetomap[filename] = outputPath
 
+	//set up mapping structure; want to split voice files up eventually... perhaps?
 	return flnames, filetomap, nil
 }

@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"social-media-ai-video/models"
+	models "social-media-ai-video/models"
 	"sort"
 	"strconv"
 	"time"
@@ -22,8 +22,27 @@ import (
 
 // going to need to revamp entire struct models; schema is just for ai, not for mapping
 
-// asp reatio should be limited to 9:16 and 1:1
-type Metadata struct {
+// AudioConfig holds prepared audio assets
+
+type AudioConfig struct {
+	ttsNarrationPaths ttsNarartionFiles // path to narration (mp3/m4a)
+	MusicEnabled      bool
+	MusicPath         MusicFiles
+	MusicVolume       float64 // 0..1
+	NarrationVolume   float64 // 0..1, if 0 treat as 1.0
+}
+
+type ttsNarartionFiles struct {
+	FilePath map[string]string
+	FileName []string
+}
+
+type MusicFiles struct {
+	MusicPath string
+	MusicName string
+}
+
+type Metadata_FFmpeg struct {
 	TotalDuration int
 	AspectRatio   string
 	FPS           int
@@ -31,70 +50,11 @@ type Metadata struct {
 	Height        int
 }
 
-// TimelineItemType discriminates the content kind per timeline entry
-
-type TimelineItemType string
-
-const (
-	TimelineItemImage       TimelineItemType = "image"
-	TimelineItemTextOverlay TimelineItemType = "text_overlay"
-	TimelineItemTransition  TimelineItemType = "transition"
-)
-
-// ImageSegmentContent references an input image by index and optional transforms
-
-type ImageSegmentContent struct {
-	ImageIndex int
-	// Animation and Crop omitted for now in ffmpeg synthesis; can be added later
-}
-
-// TextOverlayContent defines drawtext overlay
-
-type TextOverlayContent struct {
-	Text string
-	// position: center-left | center-right | center
-	Position string
-	// style
-	FontSize        int
-	ColorHex        string // #RRGGBB
-	BackgroundColor string // #RRGGBB
-	Animation       string // fade_in | slide_in | type_on | bounce | none
-}
-
-// TransitionContent defines inter-clip transition
-
-type TransitionContent struct {
-	Effect string // fade | dissolve | slide | zoom | cut
-	Easing string // linear | ease-in | ease-out | ease-in-out
-}
-
-// TimelineItem is a single vcruction on the timeline
-
-type TimelineItem struct {
-	ID        string
-	StartTime float64
-	Duration  float64
-	Type      TimelineItemType
-	Image     *ImageSegmentContent
-	Text      *TextOverlayContent
-	Trans     *TransitionContent
-}
-
-// AudioConfig holds prepared audio assets
-
-type AudioConfig struct {
-	ttsNarrationPaths []string // path to narration (mp3/m4a)
-	MusicEnabled      bool
-	MusicPath         string
-	MusicVolume       float64 // 0..1
-	NarrationVolume   float64 // 0..1, if 0 treat as 1.0
-}
-
 // CommandBuildInput contains everything needed to construct ffmpeg args
 
 type CommandBuildInput struct {
-	Metadata Metadata
-	Timeline []TimelineItem
+	Metadata_FFmpeg Metadata_FFmpeg
+	Timeline        models.Timeline
 	// Images referenced by index in timeline (ImageIndex)
 	ImagePaths []string
 	// Audio assets
@@ -139,120 +99,73 @@ func (cc *CompositionCompiler) Compile(jsonAISchemaBlob []byte, imagePaths []str
 	}
 
 	// Map Properties.Metadata.Properties
-	if len(vc.Properties.Metadata.Resolution) != 2 {
+	if len(vc.Metadata.Resolution) != 2 {
 		return nil, []string{}, "", fmt.Errorf("invalid resolution in Properties.Metadata.Properties")
 	}
 	fps := 30
-	if vc.Properties.Metadata.Fps != "" {
-		if parsed, err := strconv.Atoi(vc.Properties.Metadata.Fps); err == nil {
+	if vc.Metadata.Fps != "" {
+		if parsed, err := strconv.Atoi(vc.Metadata.Fps); err == nil {
 			fps = parsed
 		}
 	}
-	meta := Metadata{
-		TotalDuration: vc.Properties.Metadata.TotalDuration,
-		AspectRatio:   vc.Properties.Metadata.AspectRatio,
+	meta := Metadata_FFmpeg{
+		TotalDuration: vc.Metadata.TotalDuration,
+		AspectRatio:   vc.Metadata.AspectRatio,
 		FPS:           fps,
-		Width:         vc.Properties.Metadata.Resolution[0],
-		Height:        vc.Properties.Metadata.Resolution[1],
+		Width:         vc.Metadata.Resolution[0],
+		Height:        vc.Metadata.Resolution[1],
 	}
 
 	// Resolve narration via ElevenLabs
 	ttsInput := models.TTSInput{
-		Narrative: models.NarrativeData{
-			Hook:  vc.Narrative.Hook,
-			Story: vc.Narrative.Story,
-			Cta:   vc.Narrative.Cta,
-			Tone:  vc.Narrative.Tone,
-		},
-		Narration: models.NarrationData{
-			Script: mapNarrationScript(vc.Audio.Narration.Script),
-			Voice:  vc.Audio.Narration.Voice,
-		},
+		TextInput:     vc.Timeline.TextTimeline.TextSegments,
+		VoiceSettings: vc.Audio.Narration.Voice,
 	}
+
+	ttsNarrationPathsMap := map[string]string{}
 	ttsNarrationPaths := []string{}
+
+	//Generate tts narration elevenlabs
 	if cc.voiceService != nil {
 		// Ensure a tmp dir for TTS
 		ttsDir := filepath.Join(os.TempDir(), "tts_audio")
 		if err := os.MkdirAll(ttsDir, 0o755); err != nil {
 			return nil, nil, "", fmt.Errorf("failed to create tts tmp dir: %v", err)
 		}
-		paths, _, err := cc.voiceService.GenerateSpeechToTmp(ttsInput, ttsDir)
+		filenames, fileoutputmap, err := cc.voiceService.GenerateSpeechToTmp(ttsInput, ttsDir)
 		if err != nil {
 			return nil, nil, "", fmt.Errorf("tts generation failed: %v", err)
 		}
-		ttsNarrationPaths = append(ttsNarrationPaths, paths...)
+
+		ttsNarrationPathsMap = fileoutputmap
+		ttsNarrationPaths = filenames
 
 	}
 
 	// Resolve music if enabled
 	musicPath := ""
+	musicName := ""
+
 	if vc.Audio.Music.Enabled && cc.bgMusic != nil {
-		//this needs to change; it shouldn't be posting a trackID just a music theming
-		mf, err := cc.bgMusic.ResolveAndDownload(vc.Audio.Music.TrackID)
+		mf, err := cc.bgMusic.CreateBackgroundMusic(vc.Audio.Music.Mood, vc.Audio.Music.Genre)
 		if err != nil {
 			return nil, nil, "", fmt.Errorf("bgm download failed: %v", err)
 		}
 		musicPath = mf.FilePath
-	}
-
-	// Build timeline from vc.Timeline slice
-	timeline, err := func() ([]TimelineItem, error) {
-		out := make([]TimelineItem, 0, len(vc.Timeline))
-		imageIdx := 0
-		for _, it := range vc.Timeline {
-			switch it.Type {
-			case "image":
-				out = append(out, TimelineItem{
-					ID:        it.ID,
-					StartTime: float64(it.StartTime),
-					Duration:  float64(it.Duration),
-					Type:      TimelineItemImage,
-					Image:     &ImageSegmentContent{ImageIndex: imageIdx},
-				})
-				imageIdx++
-			case "text_overlay":
-				out = append(out, TimelineItem{
-					ID:        it.ID,
-					StartTime: float64(it.StartTime),
-					Duration:  float64(it.Duration),
-					Type:      TimelineItemTextOverlay,
-					Text: &TextOverlayContent{
-						Text:      it.Content,
-						Position:  "center",
-						FontSize:  24,
-						ColorHex:  "white",
-						Animation: "none",
-					},
-				})
-			case "transition":
-				out = append(out, TimelineItem{
-					ID:        it.ID,
-					StartTime: float64(it.StartTime),
-					Duration:  float64(it.Duration),
-					Type:      TimelineItemTransition,
-					Trans:     &TransitionContent{Effect: "cut", Easing: "linear"},
-				})
-			default:
-				// ignore unsupported types for now
-			}
-		}
-		return out, nil
-	}()
-	if err != nil {
-		return nil, []string{}, "", err
+		musicName = mf.FileName
 	}
 
 	// Auto-generate an output path under the OS temp directory
 	autoOutput := filepath.Join(os.TempDir(), fmt.Sprintf("short_%d.mp4", time.Now().UnixNano()))
 
 	args, err := cc.builder.Build(CommandBuildInput{
-		Metadata:   meta,
-		Timeline:   timeline,
-		ImagePaths: imagePaths,
+		Metadata_FFmpeg: meta,
+		Timeline:        vc.Timeline,
+		ImagePaths:      imagePaths,
 		Audio: AudioConfig{
-			ttsNarrationPaths: ttsNarrationPaths,
+			ttsNarrationPaths: ttsNarartionFiles{FilePath: ttsNarrationPathsMap, FileName: ttsNarrationPaths},
 			MusicEnabled:      vc.Audio.Music.Enabled,
-			MusicPath:         musicPath,
+			MusicPath:         MusicFiles{MusicPath: musicPath, MusicName: musicName},
 			MusicVolume:       vc.Audio.Music.Volume,
 			NarrationVolume:   1.0,
 		},
@@ -262,19 +175,6 @@ func (cc *CompositionCompiler) Compile(jsonAISchemaBlob []byte, imagePaths []str
 		return nil, []string{}, "", err
 	}
 	return args, ttsNarrationPaths, autoOutput, nil
-}
-
-func mapNarrationScript(in []models.NarrationScriptItem) []models.TTSSegment {
-	out := make([]models.TTSSegment, 0, len(in))
-	for _, s := range in {
-		seg := models.TTSSegment{Text: s.Text, Emphasis: s.Emphasis}
-		if s.Timing != nil {
-			seg.Start = int(s.Timing.Start)
-			seg.End = int(s.Timing.End)
-		}
-		out = append(out, seg)
-	}
-	return out
 }
 
 func (b *FFmpegCommandBuilder) Build(in CommandBuildInput) ([]string, error) {

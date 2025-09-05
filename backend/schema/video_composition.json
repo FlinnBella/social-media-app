@@ -163,10 +163,10 @@
                   ],
                   "additionalProperties": false,
                   "properties": {
-                    "id": {
-                      "type": "string",
-                      "minLength": 1,
-                      "description": "Unique identifier for this image segment"
+                    "ordering": {
+                      "type": "number",
+                      "minimum": 0,
+                      "description": "Define the position of the image in the Image Timeline"
                     },
                     "startTime": {
                       "type": "number",
@@ -180,7 +180,7 @@
                       "description": "How long this image is displayed in seconds; all image Segements must add to the total duration in the metadata"
                     },
                     "imageIndex": {
-                      "type": "integer",
+                      "type": "number",
                       "minimum": 0,
                       "description": "Index of the image in the provided images array; current design may force order"
                     },
@@ -227,6 +227,10 @@
             "TextStyle": {
               "type": "object",
               "additionalProperties": false,
+              "required": [
+                "fontFamily",
+                "textStyle"
+              ],
               "properties": {
                 "fontFamily": {
                   "type": "string",
@@ -252,13 +256,14 @@
                   "text",
                   "startTime",
                   "duration",
-                  "position"
+                  "position",
+                  "narrativeSource"
                 ],
                 "additionalProperties": false,
                 "properties": {
                   "id": {
-                    "type": "string",
-                    "minLength": 1,
+                    "type": "number",
+                    "minimum": 0,
                     "description": "Unique identifier for this text segment"
                   },
                   "text": {

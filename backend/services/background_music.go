@@ -1,14 +1,15 @@
 package services
 
 import (
-	"crypto/rand"
-	"encoding/hex"
-	"fmt"
 	"io"
 	"net/http"
 	"os"
 	"path/filepath"
+
 	"social-media-ai-video/config"
+
+	"fmt"
+	"time"
 )
 
 type BackgroundMusic struct {
@@ -24,21 +25,13 @@ func NewBackgroundMusic(cfg *config.APIConfig) *BackgroundMusic {
 	return &BackgroundMusic{cfg: cfg}
 }
 
-func randomHex(n int) (string, error) {
-	b := make([]byte, n)
-	if _, err := rand.Read(b); err != nil {
-		return "", err
-	}
-	return hex.EncodeToString(b), nil
-}
-
 // ResolveAndDownload treats trackIdOrURL as a direct URL for now.
 // Future: look up track by trackId/genre/mood via a catalog/service.
-func (b *BackgroundMusic) ResolveAndDownload(trackIdOrURL string) (*MusicFile, error) {
-	if trackIdOrURL == "" {
-		return nil, fmt.Errorf("empty track id/url")
+func (b *BackgroundMusic) CreateBackgroundMusic(mood string, genre string) (*MusicFile, error) {
+	if mood == "" || genre == "" {
+		return nil, fmt.Errorf("empty mood/genre")
 	}
-	resp, err := http.Get(trackIdOrURL)
+	resp, err := http.Get(fmt.Sprintf("https://api.soundcloud.com/tracks?client_id=YOUR_CLIENT_ID&genre=%s&mood=%s", genre, mood))
 	if err != nil {
 		return nil, fmt.Errorf("failed to GET music: %w", err)
 	}
@@ -47,11 +40,10 @@ func (b *BackgroundMusic) ResolveAndDownload(trackIdOrURL string) (*MusicFile, e
 		return nil, fmt.Errorf("music download failed: %s", resp.Status)
 	}
 
-	id, err := randomHex(16)
 	if err != nil {
 		return nil, fmt.Errorf("failed to generate filename: %w", err)
 	}
-	file_name := id + ".mp3"
+	file_name := fmt.Sprintf("background_music_%d.mp3", time.Now().UnixNano())
 	outputDir := filepath.Join(os.TempDir(), "background_music")
 	if err := os.MkdirAll(outputDir, 0o755); err != nil {
 		return nil, fmt.Errorf("failed to create tmp dir: %w", err)
