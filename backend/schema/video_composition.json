@@ -57,7 +57,7 @@
       
       "theme": {
         "type": "object",
-        "required": ["style", "mood", "colorPalette"],
+        "required": ["style", "mood", "grading"],
         "additionalProperties": false,
         "properties": {
           "style": {
@@ -79,145 +79,36 @@
                 "type": "string",
                 "enum": ["warm", "cool", "vibrant", "muted", "high-contrast", "soft"],
                 "description": "Color grading style to apply"
-              },
-          "typography": {
-            "type": "object",
-            "additionalProperties": false,
-            "properties": {
-              "fontFamily": {
-                "type": "string",
-                "description": "Font family; will be infered from the mood decisions"
-              },
-              "textStyle": {
-                "type": "string", 
-                "enum": ["bold", "regular", "light", "condensed"]
               }
-            }
-          }
         }
       },
   
-      "narrative": {
+      "Timeline": {
         "type": "object",
-        "required": ["hook", "story", "cta"],
+        "required": ["segments", "totalDuration", "images", "text"],
         "additionalProperties": false,
         "properties": {
-          "hook": {
-            "type": "string",
-            "minLength": 5,
-            "maxLength": 100,
-            "description": "Opening line to grab attention"
+          "totalDuration": {
+            "type": "number",
+            "minimum": 0,
+            "description": "Total duration of the timeline in seconds; must match what's in the metadata"
           },
-          "story": {
-            "type": "array",
-            "items": {
-              "type": "string",
-              "minLength": 10,
-              "maxLength": 200
-            },
-            "minItems": 2,
-            "maxItems": 8,
-            "description": "Main narrative beats"
-          },
-          "cta": {
-            "type": "string",
-            "minLength": 5,
-            "maxLength": 100,
-            "description": "Call-to-action ending"
-          },
-          "tone": {
-            "type": "string",
-            "enum": ["conversational", "professional", "enthusiastic", "authoritative", "friendly"]
-          }
-        }
-      },
-  
-      "timeline": {
-        "type": "array",
-        "minItems": 1,
-        "items": {
-          "type": "object",
-          "required": ["id", "startTime", "duration", "type", "content"],
-          "additionalProperties": false,
-          "properties": {
-            "id": {
-              "type": "string",
-              "minLength": 1
-            },
-            "startTime": {
-              "type": "number",
-              "minimum": 0
-            },
-            "duration": {
-              "type": "number",
-              "minimum": 0.5
-            },
-            "type": {
-              "type": "string",
-              "enum": ["image", "text_overlay", "transition"]
-            },
-            "content": {
-              "anyOf": [
-                {
-                  "$ref": "#/$defs/ImageSegment"
-                },
-                {
-                  "$ref": "#/$defs/TextOverlay"
-                },
-                {
-                  "$ref": "#/$defs/Transition"
-                }
-              ]
-            }
-          }
-        }
+          "images": {"$ref": "#/$defs/ImageTimeline"},
+          "text": {"$ref": "#/$defs/TextTimeline"}
+        },
+        "description": "Timeline of the entire video; images and text are loosely coupled"
       },
   
       "audio": {
         "type": "object",
-        "required": ["narration", "music"],
+        "required": [ "music"],
         "additionalProperties": false,
         "properties": {
           "narration": {
             "type": "object",
-            "required": ["script", "voice"],
+            "required": [ "voice"],
             "additionalProperties": false,
             "properties": {
-              "script": {
-                "type": "array",
-                "minItems": 1,
-                "items": {
-                  "type": "object",
-                  "required": ["text", "timing"],
-                  "additionalProperties": false,
-                  "properties": {
-                    "text": {
-                      "type": "string",
-                      "minLength": 1
-                    },
-                    "timing": {
-                      "type": "object",
-                      "required": ["start"],
-                      "additionalProperties": false,
-                      "properties": {
-                        "start": {
-                          "type": "number",
-                          "minimum": 0
-                        },
-                        "end": {
-                          "type": "number",
-                          "minimum": 0
-                        }
-                      }
-                    },
-                    "emphasis": {
-                      "type": "string",
-                      "enum": ["normal", "strong", "soft", "excited"],
-                      "default": "normal"
-                    }
-                  }
-                }
-              },
               "voice": {
                 "type": "object",
                 "additionalProperties": false,
@@ -226,6 +117,11 @@
                     "type": "string",
                     "description": "ElevenLabs voice ID",
                     "minLength": 1
+                  },
+                  "emphasis": {
+                    "type": "string",
+                    "enum": ["normal", "strong", "soft", "excited"],
+                    "default": "normal"
                   },
                   "speed": {
                     "type": "number", 
@@ -264,8 +160,7 @@
               "genre": {
                 "type": "string",
                 "enum": [
-                  "corporate", "upbeat", "ambient", "cinematic", "electronic",
-                  "acoustic", "inspiring", "calm", "dramatic", "minimal"
+                  "corporate", "upbeat", "ambient", "minimal", "uplifting"
                 ]
               },
               "mood": {
@@ -285,127 +180,132 @@
         }
       }
     },
-  
     "$defs": {
-      "ImageSegment": {
+      "ImageTimeline": {
         "type": "object",
-        "required": ["imageIndex", "animation"],
+        "required": ["ImageSegments"],
         "additionalProperties": false,
         "properties": {
-          "imageIndex": {
-            "type": "integer",
-            "minimum": 0
-          },
-          "animation": {
-            "type": "object",
-            "additionalProperties": false,
-            "properties": {
-              "type": {
-                "type": "string",
-                "enum": ["pan", "zoom", "static", "ken_burns", "slide"],
-                "description": "Animation type; direction will be added later"
-              },
-              "intensity": {
-                "type": "number",
-                "minimum": 0.1,
-                "maximum": 2.0,
-                "default": 1.0,
-                "description": "Animation intensity;have no idea what this does - won't use"
-              }
-            }
-          },
-          "crop": {
-            "type": "object",
-            "additionalProperties": false,
-            "description": "Crop; don't think this will be used, but may to conform with aspect-ratio && resolution",
-            "properties": {
-              "x": {
-                "type": "number", 
-                "minimum": 0, 
-                "maximum": 1,
-                "description": "X position as percentage (0-1)"
-              },
-              "y": {
-                "type": "number", 
-                "minimum": 0, 
-                "maximum": 1,
-                "description": "Y position as percentage (0-1)"
-              },
-              "width": {
-                "type": "number", 
-                "minimum": 0.1, 
-                "maximum": 1,
-                "description": "Width as percentage (0.1-1)"
-              },
-              "height": {
-                "type": "number", 
-                "minimum": 0.1, 
-                "maximum": 1,
-                "description": "Height as percentage (0.1-1)"
-              }
-            }
+          "ImageSegments": {
+            "type": "array",
+            "items": { "$ref": "#/$defs/ImageSegment" }
           }
         }
       },
-  
-      "TextOverlay": {
+      "TextTimeline": {
         "type": "object",
+        "required": ["TextSegments"],
         "additionalProperties": false,
         "properties": {
-          "text": {
-            "type": "string",
-            "minLength": 1
-          },
-          "position": {
-            "type": "string",
-            "enum": ["center-left", "center-right", "center"],
-            "default": "center",
-            "description": "Position of the text overlay"
-          },
           "style": {
-            "type": "object",
-            "additionalProperties": false,
-            "properties": {
-              "fontSize": {
-                "type": "number",
-                "minimum": 8,
-                "maximum": 200,
-                "default": 12
-              },
-              "color": {
-                "type": "string",
-                "pattern": "^#[0-9A-Fa-f]{6}$"
-              },
-              "backgroundColor": {
-                "type": "string",
-                "pattern": "^#[0-9A-Fa-f]{6}$"
-              },
-              "animation": {
-                "type": "string",
-                "enum": ["fade_in", "slide_in", "type_on", "bounce", "none"],
-                "default": "fade_in"
-              }
-            },
-            "required": ["fontSize"]
+            "$ref": "#/$defs/TextStyle",
+            "description": "Optional styling for the text"
+          },
+          "TextSegments": {
+            "type": "array",
+            "items": { "$ref": "#/$defs/TextSegment" }
           }
         }
       },
-  
-      "Transition": {
-        "type": "object",
-        "additionalProperties": false,
-        "properties": {
-          "effect": {
-            "type": "string",
-            "enum": ["fade", "dissolve", "slide", "zoom", "cut"],
-            "default": "fade"
-          },
-          "easing": {
-            "type": "string",
-            "enum": ["linear", "ease-in", "ease-out", "ease-in-out"],
-            "default": "ease-in-out"
-          }
-        }
+
+
+      "ImageSegment": {
+  "type": "object",
+  "required": ["id", "startTime", "duration", "imageIndex"],
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Unique identifier for this image segment"
+    },
+    "startTime": {
+      "type": "number",
+      "minimum": 0,
+      "description": "Start time in seconds from beginning of video"
+    },
+    "duration": {
+      "type": "number",
+      "minimum": 0.1,
+      "maximum": 15,
+      "description": "How long this image is displayed in seconds; all image Segements must add to the total duration in the metadata"
+    },
+    "imageIndex": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Index of the image in the provided images array; current design may force order"
+    },
+    "transitionOut": {
+      "$ref": "#/$defs/Transition",
+      "description": "Optional transition effect when this segment ends"
+    }
+  }
+},
+
+
+      "TextSegment": {
+  "type": "object",
+  "required": ["id", "text", "startTime", "duration", "position"],
+  "additionalProperties": false,
+  "properties": {
+    "id": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Unique identifier for this text segment"
+    },
+    "text": {
+      "type": "string",
+      "minLength": 1,
+      "maxLength": 100,
+      "description": "The text content to display"
+    },
+    "startTime": {
+      "type": "number",
+      "minimum": 0,
+      "description": "Start time in seconds from beginning of video"
+    },
+    "duration": {
+      "type": "number",
+      "minimum": 0.1,
+      "maximum": 15,
+      "description": "How long this text is displayed in seconds; all text Segements must add to the total duration in the metadata"
+    },
+    "position": {
+      "type": "string",
+      "enum": [
+        "center", 
+        "center-left",
+        "center-right"
+      ],
+      "description": "Where to position the text on screen"
+    },
+    "narrativeSource": {
+      "type": "string",
+      "description": "Reference to which part of narrative this text represents",
+      "examples": ["hook", "story[0]", "story[1]", "cta"]
+    },
+    "imageRef": {
+      "type": "string", 
+      "description": "Optional reference to ImageSegment ID for loose coupling"
+    }
+  }
+},
+
+"TextStyle": {
+  "typography": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "fontFamily": {
+        "type": "string",
+        "description": "Font family; will be infered from the mood decisions"
+      },
+      "textStyle": {
+        "type": "string", 
+        "enum": ["bold", "regular", "light", "condensed"]
       }
     }
+  }
+}   
+}
   }
