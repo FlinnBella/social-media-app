@@ -1,8 +1,6 @@
 package services
 
 import (
-	"path/filepath"
-
 	"social-media-ai-video/config"
 
 	"fmt"
@@ -28,14 +26,21 @@ func (b *BackgroundMusic) CreateBackgroundMusic(mood string, genre string) (*Mus
 		return nil, fmt.Errorf("empty mood/genre")
 	}
 
-	filePath, err := SelectMusicHelper(mood, genre)
-	if err != nil {
-		return nil, err
-	}
+	filePath, fileName, err := func(mood string, genre string) (string, string, error) {
+		//set this up later, but just invoke function for now; no actual logic
+		filePath, fileName, err := SelectMusicHelper(mood, genre)
+		if err != nil {
+			return "", "", err
+		}
+		fileName = "Aurora%20on%20the%20Boulevard%20-%20National%20Sweetheart.mp3"
+		filePath = "backend/music/Aurora%20on%20the%20Boulevard%20-%20National%20Sweetheart.mp3"
 
-	fileName := ""
-	if filePath != "" {
-		fileName = filepath.Base(filePath)
+		return filePath, fileName, nil
+
+	}(mood, genre)
+	if err != nil {
+		fmt.Errorf("failed to select music: %v", err)
+		panic(err)
 	}
 
 	return &MusicFile{FilePath: filePath, FileName: fileName}, nil
@@ -44,6 +49,6 @@ func (b *BackgroundMusic) CreateBackgroundMusic(mood string, genre string) (*Mus
 /*
 Future logic to select specific mp3; for now just pull a particular one from library
 */
-func SelectMusicHelper(mood string, genre string) (string, error) {
-	return "", nil
+func SelectMusicHelper(mood string, genre string) (string, string, error) {
+	return "", "", nil
 }
