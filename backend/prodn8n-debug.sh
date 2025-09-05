@@ -7,6 +7,6 @@ echo "Starting production server..."
 
 echo "Environment: $APP_ENV"
 # bind loopback explicitly (no delve debug logs)
-dlv debug . --headless --listen=127.0.0.1:40000 --api-version=2 --accept-multiclient
+dlv debug . --headless --listen=127.0.0.1:40000 --api-version=2 --accept-multiclient --log --log-output=debugger,stdout,stderr
 
 echo "Production server started"
