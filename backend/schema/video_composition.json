@@ -7,8 +7,7 @@
   "required": [
     "metadata",
     "theme",
-    "narrative",
-    "timeline",
+    "Timeline",
     "audio"
   ],
   "additionalProperties": false,
@@ -53,10 +52,7 @@
           "items": [
             {
               "type": "integer"
-            },
-            {
-              "type": "integer"
-            }
+            }     
           ],
           "oneOf": [
             {
@@ -155,36 +151,163 @@
           ],
           "additionalProperties": false,
           "properties": {
-            "ImageSegments": {
-              "type": "array",
-              "items": {
-                "$ref": "#/$defs/ImageSegment"
+              "ImageSegments": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "id",
+                    "startTime",
+                    "duration",
+                    "imageIndex"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "minLength": 1,
+                      "description": "Unique identifier for this image segment"
+                    },
+                    "startTime": {
+                      "type": "number",
+                      "minimum": 0,
+                      "description": "Start time in seconds from beginning of video"
+                    },
+                    "duration": {
+                      "type": "number",
+                      "minimum": 0.1,
+                      "maximum": 15,
+                      "description": "How long this image is displayed in seconds; all image Segements must add to the total duration in the metadata"
+                    },
+                    "imageIndex": {
+                      "type": "integer",
+                      "minimum": 0,
+                      "description": "Index of the image in the provided images array; current design may force order"
+                    },
+                        "Transition": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "effect": {
+                "type": "string",
+                "enum": [
+                  "fade",
+                  "dissolve",
+                  "slide",
+                  "zoom",
+                  "cut"
+                ],
+                "default": "fade"
+              },
+              "easing": {
+                "type": "string",
+                "enum": [
+                  "linear",
+                  "ease-in",
+                  "ease-out",
+                  "ease-in-out"
+                ],
+                "default": "ease-in-out"
               }
             }
+          }
+                  }
+                }
+              }
           }
         },
         "TextTimeline": {
           "type": "object",
+          "description": "Timeline of the entire video; images and text are loosely coupled",
           "required": [
             "TextSegments"
           ],
           "additionalProperties": false,
           "properties": {
-            "style": {
-              "$ref": "#/$defs/TextStyle",
-              "description": "Optional styling for the text"
+            "TextStyle": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "fontFamily": {
+                  "type": "string",
+                  "description": "Font family; will be infered from the mood decisions"
+                },
+                "textStyle": {
+                  "type": "string",
+                  "enum": [
+                    "bold",
+                    "regular",
+                    "light",
+                    "condensed"
+                  ]
+                }
+              }
             },
             "TextSegments": {
               "type": "array",
               "items": {
-                "$ref": "#/$defs/TextSegment"
+                "type": "object",
+                "required": [
+                  "id",
+                  "text",
+                  "startTime",
+                  "duration",
+                  "position"
+                ],
+                "additionalProperties": false,
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "minLength": 1,
+                    "description": "Unique identifier for this text segment"
+                  },
+                  "text": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 100,
+                    "description": "The text content to display"
+                  },
+                  "startTime": {
+                    "type": "number",
+                    "minimum": 0,
+                    "description": "Start time in seconds from beginning of video"
+                  },
+                  "duration": {
+                    "type": "number",
+                    "minimum": 0.1,
+                    "maximum": 15,
+                    "description": "How long this text is displayed in seconds; all text Segements must add to the total duration in the metadata"
+                  },
+                  "position": {
+                    "type": "string",
+                    "enum": [
+                      "center",
+                      "center-left",
+                      "center-right"
+                    ],
+                    "description": "Where to position the text on screen"
+                  },
+                  "narrativeSource": {
+                    "type": "string",
+                    "description": "Reference to which part of narrative this text represents",
+                    "examples": [
+                      "hook",
+                      "story[0]",
+                      "story[1]",
+                      "cta"
+                    ]
+                  },
+                  "imageRef": {
+                    "type": "string",
+                    "description": "Optional reference to ImageSegment ID for loose coupling"
+                  }
+                }
               }
             }
           }
         }
-      },
-      "description": "Timeline of the entire video; images and text are loosely coupled"
-    },
+      }
+        },
     "audio": {
       "type": "object",
       "required": [
