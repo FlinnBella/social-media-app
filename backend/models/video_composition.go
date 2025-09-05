@@ -15,14 +15,8 @@ type VideoCompositionResponse struct {
 		ColorPalette map[string]string `json:"colorPalette"`
 		Typography   map[string]string `json:"typography"`
 	} `json:"theme"`
-	Narrative struct {
-		Hook  string   `json:"hook"`
-		Story []string `json:"story"`
-		Cta   string   `json:"cta"`
-		Tone  string   `json:"tone"`
-	} `json:"narrative"`
 
-	Timeline []TimelineItem `json:"timeline"`
+	Timeline Timeline `json:"timeline"`
 
 	Audio struct {
 		Narration struct {
@@ -42,9 +36,33 @@ type VideoCompositionResponse struct {
 	} `json:"audio"`
 }
 
+// New: item-level type for timeline array
+type Timeline struct {
+	ImageTimeline ImageTimeline `json:"imageTimeline"`
+	TextTimeline  TextTimeline  `json:"textTimeline"`
+}
+
+type ImageTimeline struct {
+}
+
 type ImageSegment struct {
-	ImageIndex int    `json:"imageIndex"`
-	Theme      string `json:"theme"`
+	ImageIndex int `json:"imageIndex"`
+}
+
+type TextTimeline struct {
+}
+
+type TextSegment struct {
+}
+
+// New: narration script item to match JSON array
+type NarrationScriptItem struct {
+	Text   string `json:"text"`
+	Timing *struct {
+		Start int `json:"start"`
+		End   int `json:"end"`
+	} `json:"timing"`
+	Emphasis string `json:"emphasis"`
 }
 
 type TextOverlay struct {
@@ -56,27 +74,4 @@ type TextOverlay struct {
 type TransitionTimelineItem struct {
 	Effect string `json:"effect"`
 	Easing string `json:"easing"`
-}
-
-// New: item-level type for timeline array
-type TimelineItem struct {
-	ID        string `json:"id"`
-	StartTime int    `json:"startTime"`
-	Duration  int    `json:"duration"`
-	Type      string `json:"type"`
-	Content   string `json:"content,omitempty"`
-
-	ImageSegment *ImageSegment           `json:"imageSegment,omitempty"`
-	TextOverlay  *TextOverlay            `json:"textOverlay,omitempty"`
-	Transition   *TransitionTimelineItem `json:"transition,omitempty"`
-}
-
-// New: narration script item to match JSON array
-type NarrationScriptItem struct {
-	Text   string `json:"text"`
-	Timing *struct {
-		Start int `json:"start"`
-		End   int `json:"end"`
-	} `json:"timing"`
-	Emphasis string `json:"emphasis"`
 }
