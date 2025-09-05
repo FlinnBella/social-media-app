@@ -93,6 +93,14 @@ func (cc *CompositionCompiler) Compile(jsonAISchemaBlob []byte, imagePaths []str
 	//schema object
 	var vc models.VideoCompositionResponse
 
+	// unwrap optional top-level {"output": ...} wrapper if present
+	var outer struct {
+		Output json.RawMessage `json:"output"`
+	}
+	if err := json.Unmarshal(jsonAISchemaBlob, &outer); err == nil && len(outer.Output) > 0 {
+		jsonAISchemaBlob = outer.Output
+	}
+
 	//jsonAISchemaBlob should conform to schema, place in vc
 	if err := json.Unmarshal(jsonAISchemaBlob, &vc); err != nil {
 		return nil, []string{}, "", fmt.Errorf("invalid composition json: %v. Given json: %s", err, string(jsonAISchemaBlob))
@@ -100,7 +108,7 @@ func (cc *CompositionCompiler) Compile(jsonAISchemaBlob []byte, imagePaths []str
 
 	// Map Properties.Metadata.Properties
 	if len(vc.Metadata.Resolution) != 2 {
-		return nil, []string{}, "", fmt.Errorf("invalid resolution in Properties.Metadata.Properties")
+		return nil, []string{}, "", fmt.Errorf("invalid resolution resolution array %v", vc.Metadata.Resolution)
 	}
 	fps := 30
 	if vc.Metadata.Fps != "" {
@@ -188,7 +196,7 @@ func (b *FFmpegCommandBuilder) Build(in CommandBuildInput) ([]string, error) {
 	// Validate image indices
 	for _, t := range in.Timeline.ImageTimeline.ImageSegments {
 		if t.ImageIndex < 0 || t.ImageIndex >= len(in.ImagePaths) {
-			return nil, fmt.Errorf("image item %s references invalid image index", t.ImageIndex)
+			return nil, fmt.Errorf("image item %d references invalid image index", t.ImageIndex)
 		}
 
 	}
@@ -255,14 +263,14 @@ func (b *FFmpegCommandBuilder) Build(in CommandBuildInput) ([]string, error) {
 		// Use loop filter to make image into frames: loop=loop=FPS*duration:size=1:start=0, fps=FPS
 		// We'll use: scale=W:H:force_original_aspect_ratio=decrease, pad=W:H:(ow-iw)/2:(oh-ih)/2,format=yuv420p
 		filter += fmt.Sprintf("%s scale=%d:%d:force_original_aspect_ratio=decrease,pad=%d:%d:(ow-iw)/2:(oh-ih)/2,format=yuv420p,fps=%d,trim=duration=%f,setpts=PTS-STARTPTS %s;",
-			labelIn, in.Metadata_FFmpeg.Width, in.Metadata_FFmpeg.Height, in.Metadata_FFmpeg.Width, in.Metadata_FFmpeg.Height, in.Metadata_FFmpeg.FPS, t.Duration, labelOut)
+			labelIn, in.Metadata_FFmpeg.Width, in.Metadata_FFmpeg.Height, in.Metadata_FFmpeg.Width, in.Metadata_FFmpeg.Height, in.Metadata_FFmpeg.FPS, float64(t.Duration), labelOut)
 		imageStreamCount++
 	}
 
 	// Concatenate all video segments in order
 	concatInputs := ""
 	for idx, t := range sorted {
-		if t.ImageIndex < 0 || t.ImageIndex >= len(in.ImagePaths) {
+		if t.ImageIndex >= 0 && t.ImageIndex < len(in.ImagePaths) {
 			concatInputs += fmt.Sprintf("[seg%d]", idx)
 		}
 	}
@@ -289,7 +297,7 @@ func (b *FFmpegCommandBuilder) Build(in CommandBuildInput) ([]string, error) {
 			}
 		*/
 		labelOut := fmt.Sprintf("[vtx%d]", textIdx)
-		enable := fmt.Sprintf("enable='between(t,%.3f,%.3f)'", t.StartTime, t.StartTime+t.Duration)
+		enable := fmt.Sprintf("enable='between(t,%.3f,%.3f)'", float64(t.StartTime), float64(t.StartTime+t.Duration))
 		filter += fmt.Sprintf("%s drawtext=text=%s:fontcolor=%s:fontsize=%d:x=%s:y=%s%s:%s %s;",
 			videoLabel, text, colorOrDefault(fnt.FontFamily), maxInt(0, 12), xy[0], xy[1], bg, enable, labelOut)
 		videoLabel = labelOut

@@ -7,7 +7,7 @@
   "required": [
     "metadata",
     "theme",
-    "Timeline",
+    "timeline",
     "audio"
   ],
   "additionalProperties": false,
@@ -49,11 +49,9 @@
           "minItems": 2,
           "maxItems": 2,
           "description": "Video resolution as [width, height] that corresponds to the selected aspect ratio. Only supported resolutions are allowed.",
-          "items": [
-            {
+          "items": {
               "type": "integer"
-            }     
-          ],
+            },
           "oneOf": [
             {
               "description": "Valid 9:16 resolutions",
@@ -130,7 +128,7 @@
         }
       }
     },
-    "Timeline": {
+    "timeline": {
       "type": "object",
       "required": [
         "totalDuration",
@@ -156,7 +154,7 @@
                 "items": {
                   "type": "object",
                   "required": [
-                    "id",
+                    "ordering",
                     "startTime",
                     "duration",
                     "imageIndex"
@@ -220,7 +218,8 @@
           "type": "object",
           "description": "Timeline of the entire video; images and text are loosely coupled",
           "required": [
-            "TextSegments"
+            "TextSegments",
+            "TextStyle"
           ],
           "additionalProperties": false,
           "properties": {
@@ -252,7 +251,6 @@
               "items": {
                 "type": "object",
                 "required": [
-                  "id",
                   "text",
                   "startTime",
                   "duration",
@@ -261,11 +259,6 @@
                 ],
                 "additionalProperties": false,
                 "properties": {
-                  "id": {
-                    "type": "number",
-                    "minimum": 0,
-                    "description": "Unique identifier for this text segment"
-                  },
                   "text": {
                     "type": "string",
                     "minLength": 1,
@@ -322,9 +315,6 @@
       "properties": {
         "narration": {
           "type": "object",
-          "required": [
-            "voice"
-          ],
           "additionalProperties": false,
           "properties": {
             "voice": {

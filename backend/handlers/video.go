@@ -9,6 +9,7 @@ import (
 	"net/http"
 
 	"os"
+	"os/exec"
 	"path/filepath"
 
 	"social-media-ai-video/config"
@@ -139,13 +140,37 @@ func (vh *VideoHandler) GenerateVideoReels(c *gin.Context) {
 	}
 
 	// Compile with AI schema blob and local image paths
-	args, paths, outputPath, err := vh.ffmpegCompiler.Compile(respBytes, localImagePaths)
+	args, _, outputPath, err := vh.ffmpegCompiler.Compile(respBytes, localImagePaths)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": err.Error()})
 		return
 	}
+	defer os.Remove(outputPath)
 
-	c.JSON(http.StatusOK, gin.H{"args": args, "paths": paths, "outputPath": outputPath})
+	cmd := exec.Command("ffmpeg", args...)
+	// Run ffmpeg and capture output for diagnostics
+	if output, err := cmd.CombinedOutput(); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status":  "error",
+			"error":   fmt.Sprintf("ffmpeg failed: %v", err),
+			"details": string(output),
+		})
+		return
+	}
+
+	// Ensure output file exists and is non-empty before serving
+	if fi, statErr := os.Stat(outputPath); statErr != nil || fi.Size() == 0 {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  fmt.Sprintf("output file missing or empty: %v", statErr),
+		})
+		return
+	}
+
+	// After ffmpeg finishes and you have outputPath
+	c.Header("Content-Type", "video/mp4")
+	c.File(outputPath) // streams via http.ServeFile; supports Range (seek/scrub)
+
 }
 
 // this function is currently broken; fix later

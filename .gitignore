@@ -24,3 +24,7 @@ dist-ssr
 *.sln
 *.sw?
 .env
+
+
+# debug logs
+__debug_bin*

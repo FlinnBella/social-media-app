@@ -35,12 +35,13 @@ type Metadata struct {
 
 // New: item-level type for timeline array
 type Timeline struct {
-	ImageTimeline ImageTimeline `json:"imageTimeline"`
-	TextTimeline  TextTimeline  `json:"textTimeline"`
+	TotalDuration int           `json:"totalDuration"`
+	ImageTimeline ImageTimeline `json:"ImageTimeline"`
+	TextTimeline  TextTimeline  `json:"TextTimeline"`
 }
 
 type ImageTimeline struct {
-	ImageSegments []ImageSegment `json:"imageSegments"`
+	ImageSegments []ImageSegment `json:"ImageSegments"`
 }
 
 type ImageSegment struct {
@@ -58,7 +59,7 @@ type TransitionTimelineItem struct {
 
 type TextTimeline struct {
 	TextStyle    TextStyle     `json:"TextStyle"`
-	TextSegments []TextSegment `json:"textSegments"`
+	TextSegments []TextSegment `json:"TextSegments"`
 }
 
 type TextSegment struct {

@@ -29,7 +29,7 @@ func LoadAPIConfig() *APIConfig {
 		Environment: env,
 		//using the mary voice id: spanish, young BITCH!
 		ElevenLabsAPIKey:  getEnvOrDefault("ELEVENLABS_API_KEY", "sk_c78e929e9d436804555d72838e56b279d994faf76151a3b6"),
-		ElevenLabsBaseURL: getEnvOrDefault("ELEVENLABS_BASE_URL", "https://api.elevenlabs.io/v1/text-to-speech/:tvWD4i07Hg5L4uEvbxYV"),
+		ElevenLabsBaseURL: getEnvOrDefault("ELEVENLABS_BASE_URL", "https://api.elevenlabs.io/v1"),
 		N8NPLEXELSURL:     N8NPLEXELSURL,
 		N8NREELSURL:       N8NREELSURL,
 		N8NAPIKey:         getEnvOrDefault("N8N_API_KEY", "n8n_api_key_here"),

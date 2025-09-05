@@ -37,7 +37,7 @@ func (els *ElevenLabsService) GenerateSpeechToTmp(input models.TTSInput, tmpDir 
 	//exact outpath paths into TmpDir
 	//exact filenames; prefixed with elevenlabs_
 	var flnames []string
-	var filetomap map[string]string
+	var filetomap map[string]string = make(map[string]string)
 
 	for _, seg := range input.TextInput {
 		if strings.TrimSpace(seg.Text) != "" {
@@ -49,12 +49,13 @@ func (els *ElevenLabsService) GenerateSpeechToTmp(input models.TTSInput, tmpDir 
 
 	payload := TTSRequest{
 		Text:    text,
-		ModelID: "eleven_monolingual_v1",
+		ModelID: "eleven_multilingual_v2",
 		VoiceSettings: map[string]interface{}{
 			"stability":        input.VoiceSettings.Stability,
 			"similarity_boost": 0.5,
-			"speed":            input.VoiceSettings.Speed,
+			"speed":            1.0,
 		},
+		//|| input.VoiceSettings.Speed, add this later perhaps
 	}
 
 	jsonData, err := json.Marshal(payload)
@@ -115,6 +116,7 @@ func (els *ElevenLabsService) GenerateSpeechToTmp(input models.TTSInput, tmpDir 
 	if err != nil {
 		return []string{}, map[string]string{}, fmt.Errorf("failed to save audio file: %v", err)
 	}
+
 	filetomap[filename] = outputPath
 
 	//set up mapping structure; want to split voice files up eventually... perhaps?
