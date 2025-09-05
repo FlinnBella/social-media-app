@@ -178,7 +178,7 @@ func (cc *CompositionCompiler) Compile(jsonAISchemaBlob []byte, imagePaths []str
 }
 
 func (b *FFmpegCommandBuilder) Build(in CommandBuildInput) ([]string, error) {
-	if in.Metadata.Width <= 0 || in.Metadata.Height <= 0 || in.Metadata.FPS <= 0 {
+	if in.Metadata_FFmpeg.Width <= 0 || in.Metadata_FFmpeg.Height <= 0 || in.Metadata_FFmpeg.FPS <= 0 {
 		return nil, fmt.Errorf("invalid metadata: width/height/fps must be > 0")
 	}
 	if in.OutputPath == "" {
@@ -186,30 +186,17 @@ func (b *FFmpegCommandBuilder) Build(in CommandBuildInput) ([]string, error) {
 	}
 
 	// Validate image indices
-	for _, t := range in.Timeline {
-		if t.Type == TimelineItemImage {
-			if t.Image == nil || t.Image.ImageIndex < 0 || t.Image.ImageIndex >= len(in.ImagePaths) {
-				return nil, fmt.Errorf("timeline %s references invalid image index", t.ID)
-			}
+	for _, t := range in.Timeline.ImageTimeline.ImageSegments {
+		if t.ImageIndex < 0 || t.ImageIndex >= len(in.ImagePaths) {
+			return nil, fmt.Errorf("image item %s references invalid image index", t.ImageIndex)
 		}
+
 	}
 
 	// Sort timeline by start time to build proper concat order
-	sorted := make([]TimelineItem, len(in.Timeline))
-	copy(sorted, in.Timeline)
+	sorted := make([]models.ImageSegment, len(in.Timeline.ImageTimeline.ImageSegments))
+	copy(sorted, in.Timeline.ImageTimeline.ImageSegments)
 	sort.Slice(sorted, func(i, j int) bool { return sorted[i].StartTime < sorted[j].StartTime })
-
-	// Require at least one image segment
-	hasImage := false
-	for _, t := range sorted {
-		if t.Type == TimelineItemImage {
-			hasImage = true
-			break
-		}
-	}
-	if !hasImage {
-		return nil, fmt.Errorf("no image segments present; image inputs are required")
-	}
 
 	// Input list: images + audio(s)
 	args := []string{"-y"}
@@ -223,26 +210,26 @@ func (b *FFmpegCommandBuilder) Build(in CommandBuildInput) ([]string, error) {
 	// Audio inputs appended at the end so index math is predictable
 	numImageInputs := len(in.ImagePaths)
 	audioInputStart := numImageInputs
-	var narrationPath string
-	if len(in.Audio.ttsNarrationPaths) > 0 {
-		narrationPath = in.Audio.ttsNarrationPaths[0]
-		args = append(args, "-i", narrationPath)
+	var narrationPath []string
+	for i := 0; i < len(in.Audio.ttsNarrationPaths.FileName); i++ {
+		narrationPath = append(narrationPath, in.Audio.ttsNarrationPaths.FilePath[in.Audio.ttsNarrationPaths.FileName[i]])
+		args = append(args, "-i", narrationPath[i])
 	}
 	musicIdx := -1
 	narrIdx := -1
-	if narrationPath != "" {
+	if len(narrationPath) > 0 {
 		narrIdx = audioInputStart
-		if in.Audio.MusicEnabled && in.Audio.MusicPath != "" {
+		if in.Audio.MusicEnabled && in.Audio.MusicPath.MusicPath != "" {
 			musicIdx = audioInputStart + 1
 		}
-	} else if in.Audio.MusicEnabled && in.Audio.MusicPath != "" {
+	} else if in.Audio.MusicEnabled && in.Audio.MusicPath.MusicPath != "" {
 		// Only music
-		args = append(args, "-i", in.Audio.MusicPath)
+		args = append(args, "-i", in.Audio.MusicPath.MusicPath)
 		musicIdx = audioInputStart
 	}
-	if in.Audio.MusicEnabled && in.Audio.MusicPath != "" && musicIdx == -1 {
+	if in.Audio.MusicEnabled && in.Audio.MusicPath.MusicPath != "" && musicIdx == -1 {
 		// Music not yet added (narration present handled earlier). Add now.
-		args = append(args, "-i", in.Audio.MusicPath)
+		args = append(args, "-i", in.Audio.MusicPath.MusicPath)
 		if narrIdx >= 0 {
 			musicIdx = narrIdx + 1
 		} else {
@@ -257,10 +244,10 @@ func (b *FFmpegCommandBuilder) Build(in CommandBuildInput) ([]string, error) {
 	// We map image input index -> variable label like [imgN]
 	imageStreamCount := 0
 	for idx, t := range sorted {
-		if t.Type != TimelineItemImage || t.Image == nil {
+		if t.ImageIndex < 0 || t.ImageIndex >= len(in.ImagePaths) {
 			continue
 		}
-		imgInputIdx := t.Image.ImageIndex
+		imgInputIdx := t.ImageIndex
 		labelIn := fmt.Sprintf("[%d:v]", imgInputIdx)
 		labelOut := fmt.Sprintf("[seg%d]", idx)
 		// scale to canvas, pad/crop, set fps, set duration
@@ -268,14 +255,14 @@ func (b *FFmpegCommandBuilder) Build(in CommandBuildInput) ([]string, error) {
 		// Use loop filter to make image into frames: loop=loop=FPS*duration:size=1:start=0, fps=FPS
 		// We'll use: scale=W:H:force_original_aspect_ratio=decrease, pad=W:H:(ow-iw)/2:(oh-ih)/2,format=yuv420p
 		filter += fmt.Sprintf("%s scale=%d:%d:force_original_aspect_ratio=decrease,pad=%d:%d:(ow-iw)/2:(oh-ih)/2,format=yuv420p,fps=%d,trim=duration=%f,setpts=PTS-STARTPTS %s;",
-			labelIn, in.Metadata.Width, in.Metadata.Height, in.Metadata.Width, in.Metadata.Height, in.Metadata.FPS, t.Duration, labelOut)
+			labelIn, in.Metadata_FFmpeg.Width, in.Metadata_FFmpeg.Height, in.Metadata_FFmpeg.Width, in.Metadata_FFmpeg.Height, in.Metadata_FFmpeg.FPS, t.Duration, labelOut)
 		imageStreamCount++
 	}
 
 	// Concatenate all video segments in order
 	concatInputs := ""
 	for idx, t := range sorted {
-		if t.Type == TimelineItemImage {
+		if t.ImageIndex < 0 || t.ImageIndex >= len(in.ImagePaths) {
 			concatInputs += fmt.Sprintf("[seg%d]", idx)
 		}
 	}
@@ -287,20 +274,24 @@ func (b *FFmpegCommandBuilder) Build(in CommandBuildInput) ([]string, error) {
 	// Apply text overlays with enable between(t, start, end)
 	videoLabel := "[basev]"
 	textIdx := 0
+	textsegments := in.Timeline.TextTimeline.TextSegments
+	fnt := in.Timeline.TextTimeline.TextStyle
 	for _, t := range sorted {
-		if t.Type != TimelineItemTextOverlay || t.Text == nil {
+		if t.ImageIndex < 0 || t.ImageIndex >= len(in.ImagePaths) {
 			continue
 		}
-		text := escapeDrawtext(t.Text.Text)
-		xy := positionXY(t.Text.Position, in.Metadata.Width, in.Metadata.Height)
+		text := escapeDrawtext(textsegments[textIdx].Text)
+		xy := positionXY(textsegments[textIdx].Position, in.Metadata_FFmpeg.Width, in.Metadata_FFmpeg.Height)
 		bg := ""
-		if t.Text.BackgroundColor != "" {
-			bg = fmt.Sprintf(":box=1:boxcolor=%s@0.6", t.Text.BackgroundColor)
-		}
+		/*
+			if textsegments[textIdx].BackgroundColor != "" {
+				bg = fmt.Sprintf(":box=1:boxcolor=%s@0.6", textsegments[textIdx].BackgroundColor)
+			}
+		*/
 		labelOut := fmt.Sprintf("[vtx%d]", textIdx)
 		enable := fmt.Sprintf("enable='between(t,%.3f,%.3f)'", t.StartTime, t.StartTime+t.Duration)
 		filter += fmt.Sprintf("%s drawtext=text=%s:fontcolor=%s:fontsize=%d:x=%s:y=%s%s:%s %s;",
-			videoLabel, text, colorOrDefault(t.Text.ColorHex), maxInt(t.Text.FontSize, 12), xy[0], xy[1], bg, enable, labelOut)
+			videoLabel, text, colorOrDefault(fnt.FontFamily), maxInt(0, 12), xy[0], xy[1], bg, enable, labelOut)
 		videoLabel = labelOut
 		textIdx++
 	}
@@ -344,8 +335,8 @@ func (b *FFmpegCommandBuilder) Build(in CommandBuildInput) ([]string, error) {
 
 	// Output settings
 	args = append(args,
-		"-r", fmt.Sprintf("%d", in.Metadata.FPS),
-		"-s", fmt.Sprintf("%dx%d", in.Metadata.Width, in.Metadata.Height),
+		"-r", fmt.Sprintf("%d", in.Metadata_FFmpeg.FPS),
+		"-s", fmt.Sprintf("%dx%d", in.Metadata_FFmpeg.Width, in.Metadata_FFmpeg.Height),
 		"-c:v", "libx264",
 		"-pix_fmt", "yuv420p",
 		"-preset", "fast",
