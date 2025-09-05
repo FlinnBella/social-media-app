@@ -118,6 +118,7 @@ func (els *ElevenLabsService) GenerateSpeechToTmp(input models.TTSInput, tmpDir 
 	}
 
 	filetomap[filename] = outputPath
+	flnames = append(flnames, filename)
 
 	//set up mapping structure; want to split voice files up eventually... perhaps?
 	return flnames, filetomap, nil

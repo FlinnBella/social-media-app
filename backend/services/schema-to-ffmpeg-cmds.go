@@ -193,6 +193,13 @@ func (b *FFmpegCommandBuilder) Build(in CommandBuildInput) ([]string, error) {
 		return nil, fmt.Errorf("missing output path")
 	}
 
+	// Validate image input paths exist
+	for _, p := range in.ImagePaths {
+		if _, err := os.Stat(p); err != nil {
+			return nil, fmt.Errorf("missing input file: %s: %v", p, err)
+		}
+	}
+
 	// Validate image indices
 	for _, t := range in.Timeline.ImageTimeline.ImageSegments {
 		if t.ImageIndex < 0 || t.ImageIndex >= len(in.ImagePaths) {
@@ -283,10 +290,12 @@ func (b *FFmpegCommandBuilder) Build(in CommandBuildInput) ([]string, error) {
 	videoLabel := "[basev]"
 	textIdx := 0
 	textsegments := in.Timeline.TextTimeline.TextSegments
-	fnt := in.Timeline.TextTimeline.TextStyle
 	for _, t := range sorted {
 		if t.ImageIndex < 0 || t.ImageIndex >= len(in.ImagePaths) {
 			continue
+		}
+		if textIdx >= len(textsegments) {
+			break
 		}
 		text := escapeDrawtext(textsegments[textIdx].Text)
 		xy := positionXY(textsegments[textIdx].Position, in.Metadata_FFmpeg.Width, in.Metadata_FFmpeg.Height)
@@ -299,7 +308,7 @@ func (b *FFmpegCommandBuilder) Build(in CommandBuildInput) ([]string, error) {
 		labelOut := fmt.Sprintf("[vtx%d]", textIdx)
 		enable := fmt.Sprintf("enable='between(t,%.3f,%.3f)'", float64(t.StartTime), float64(t.StartTime+t.Duration))
 		filter += fmt.Sprintf("%s drawtext=text=%s:fontcolor=%s:fontsize=%d:x=%s:y=%s%s:%s %s;",
-			videoLabel, text, colorOrDefault(fnt.FontFamily), maxInt(0, 12), xy[0], xy[1], bg, enable, labelOut)
+			videoLabel, text, colorOrDefault("FFFFFF"), maxInt(0, 12), xy[0], xy[1], bg, enable, labelOut)
 		videoLabel = labelOut
 		textIdx++
 	}
