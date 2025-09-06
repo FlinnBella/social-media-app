@@ -311,7 +311,8 @@ func (b *FFmpegCommandBuilder) Build(in CommandBuildInput) ([]string, error) {
 			break
 		}
 		text := escapeDrawtext(textsegments[textIdx].Text)
-		xy := positionXY(textsegments[textIdx].Position, in.Metadata_FFmpeg.Width, in.Metadata_FFmpeg.Height)
+		//textsegments[textIdx].Position
+		xy := positionXY("center-bottom", in.Metadata_FFmpeg.Width, in.Metadata_FFmpeg.Height)
 		bg := ""
 		/*
 			if textsegments[textIdx].BackgroundColor != "" {
@@ -320,8 +321,8 @@ func (b *FFmpegCommandBuilder) Build(in CommandBuildInput) ([]string, error) {
 		*/
 		labelOut := fmt.Sprintf("[vtx%d]", textIdx)
 		enable := fmt.Sprintf("enable='between(t,%.3f,%.3f)'", float64(t.StartTime), float64(t.StartTime+t.Duration))
-		filter += fmt.Sprintf("%s drawtext=text=%s:fontcolor=%s:fontsize=%d:x=%s:y=%s%s:%s %s;",
-			videoLabel, text, colorOrDefault("black"), maxInt(0, 24), xy[0], xy[1], bg, enable, labelOut)
+		filter += fmt.Sprintf("%s drawtext=text=%s:fontcolor=white:borderw=%d:bordercolor=%s:fontsize=%d:x=%s:y=%s%s:%s %s;",
+			videoLabel, text, 2, "black", maxInt(0, 24), xy[0], xy[1], bg, enable, labelOut)
 		videoLabel = labelOut
 		textIdx++
 	}
@@ -450,6 +451,8 @@ func positionXY(pos string, w, h int) [2]string {
 		return [2]string{"(w-tw)/4", "(h-th)/2"}
 	case "center-right":
 		return [2]string{"3*(w-tw)/4", "(h-th)/2"}
+	case "center-bottom":
+		return [2]string{"(w-tw)/2", "h-th-20"}
 	default: // center
 		return [2]string{"(w-tw)/2", "(h-th)/2"}
 	}
