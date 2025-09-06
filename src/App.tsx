@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { toast } from 'sonner';
-import { ArrowRight, Upload, Camera, Monitor, Smartphone } from 'lucide-react';
+import { ArrowRight, Upload, Camera, Monitor, Smartphone, Download } from 'lucide-react';
 import { Textarea } from '@/components/ui/textarea';
 import { cn } from '@/lib/utils';
 import { useAutoResizeTextarea } from '@/hooks/use-auto-resize-textarea';
@@ -87,6 +87,18 @@ function App() {
     return () => window.removeEventListener('resize', checkMobile);
   }, []);
 
+  const downloadVideo = () => {
+    const lastMessage = messages[messages.length - 1];
+    if (!lastMessage?.videoUrl) return;
+    
+    const link = document.createElement('a');
+    link.href = lastMessage.videoUrl;
+    link.download = `property-video-${Date.now()}.mp4`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    toast.success('Video downloaded successfully!');
+  };
   const handleFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
     const files = event.target.files;
     if (!files) return;
@@ -419,25 +431,49 @@ function App() {
         {/* Social Media Links - Show after video generation */}
         {messages.length > 0 && messages[messages.length - 1].videoUrl && (
           <div className="w-full max-w-2xl bg-white/95 backdrop-blur-sm rounded-2xl shadow-2xl p-4">
-            <p className="text-sm text-gray-600 mb-3 font-ibm text-center">Share your property video:</p>
+            <div className="text-center mb-4">
+              <h3 className="text-lg font-semibold text-gray-800 mb-2">Share Your Property Video</h3>
+              <p className="text-sm text-gray-600">Download locally or share directly to social media</p>
+            </div>
+            
+            {/* Download Button */}
+            <div className="flex justify-center mb-4">
+              <Button
+                onClick={downloadVideo}
+                className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-lg font-medium transition-colors"
+              >
+                <Download className="w-4 h-4" />
+                Download Video
+              </Button>
+            </div>
+            
+            {/* Social Media Icons */}
             <div className="flex justify-center gap-4">
               <a href="https://www.instagram.com/create/story/" target="_blank" rel="noopener noreferrer" 
-                 className="p-3 bg-white rounded-xl hover:scale-105 transition-transform shadow-lg">
+                 className="p-3 bg-white rounded-xl hover:scale-105 transition-transform shadow-lg"
+                 title="Share to Instagram Stories">
                 <InstagramSVG />
               </a>
               <a href="https://www.tiktok.com/upload/" target="_blank" rel="noopener noreferrer"
-                 className="p-3 bg-white rounded-xl hover:scale-105 transition-transform shadow-lg">
+                 className="p-3 bg-white rounded-xl hover:scale-105 transition-transform shadow-lg"
+                 title="Upload to TikTok">
                 <TikTokSVG />
               </a>
               <a href="https://twitter.com/compose/tweet" target="_blank" rel="noopener noreferrer"
-                 className="p-3 bg-white rounded-xl hover:scale-105 transition-transform shadow-lg">
+                 className="p-3 bg-white rounded-xl hover:scale-105 transition-transform shadow-lg"
+                 title="Share on X (Twitter)">
                 <TwitterSVG />
               </a>
               <a href="https://www.facebook.com/" target="_blank" rel="noopener noreferrer"
-                 className="p-3 bg-white rounded-xl hover:scale-105 transition-transform shadow-lg">
+                 className="p-3 bg-white rounded-xl hover:scale-105 transition-transform shadow-lg"
+                 title="Share on Facebook">
                 <FacebookSVG />
               </a>
             </div>
+            
+            <p className="text-xs text-gray-500 text-center mt-3">
+              Click download first, then use the social media links to upload your saved video
+            </p>
           </div>
         )}
       </div>
