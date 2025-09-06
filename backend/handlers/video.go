@@ -150,6 +150,9 @@ func (vh *VideoHandler) GenerateVideoReels(c *gin.Context) {
 	cmd := exec.Command("ffmpeg", args...)
 	// Run ffmpeg and capture output for diagnostics
 	if output, err := cmd.CombinedOutput(); err != nil {
+		fmt.Printf("ffmpeg args: %v\n", args)
+		fmt.Printf("ffmpeg error: %v\n", err)
+		fmt.Printf("ffmpeg output: %s\n", string(output))
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status":  "error",
 			"error":   fmt.Sprintf("ffmpeg failed: %v", err),

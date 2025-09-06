@@ -1,0 +1,57 @@
+version: "3.9"
+
+services:
+  dev:
+    image: mcr.microsoft.com/devcontainers/base:ubuntu
+    container_name: smav-dev
+    volumes:
+      - ..:/workspaces/social-media-app:cached
+    working_dir: /workspaces/social-media-app
+    command: sleep infinity
+    depends_on:
+      - backend
+      - web
+    networks:
+      - smav-net
+
+  backend:
+    build:
+      context: ..
+      dockerfile: backend/Dockerfile
+    container_name: smav-backend
+    environment:
+      - APP_ENV=production
+      - PORT=8080
+      - ELEVENLABS_API_KEY=${ELEVENLABS_API_KEY:-}
+      - ELEVENLABS_BASE_URL=${ELEVENLABS_BASE_URL:-https://api.elevenlabs.io/v1}
+      - N8N_PLEXELS_URL=${N8N_PLEXELS_URL:-}
+      - N8N_REELS_URL=${N8N_REELS_URL:-}
+      - N8N_API_KEY=${N8N_API_KEY:-}
+      - SHORT_VIDEO_BASE_URL=${SHORT_VIDEO_BASE_URL:-http://localhost}
+    volumes:
+      - ../backend/tmp:/tmp
+      - ../backend/music:/app/backend/music:ro
+    expose:
+      - "8080"
+    restart: unless-stopped
+    networks:
+      - smav-net
+
+  web:
+    build:
+      context: ..
+      dockerfile: caddy/Dockerfile
+    container_name: smav-web
+    depends_on:
+      - backend
+    ports:
+      - "80:80"
+      - "443:443"
+    restart: unless-stopped
+    networks:
+      - smav-net
+
+networks:
+  smav-net:
+    name: smav-net
+

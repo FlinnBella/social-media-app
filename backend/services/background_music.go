@@ -33,7 +33,7 @@ func (b *BackgroundMusic) CreateBackgroundMusic(mood string, genre string) (*Mus
 			return "", "", err
 		}
 		fileName = "Aurora%20on%20the%20Boulevard%20-%20National%20Sweetheart.mp3"
-		filePath = "backend/music/Aurora%20on%20the%20Boulevard%20-%20National%20Sweetheart.mp3"
+		filePath = "music/Aurora%20on%20the%20Boulevard%20-%20National%20Sweetheart.mp3"
 
 		return filePath, fileName, nil
 

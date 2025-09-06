@@ -1,8 +1,16 @@
+{
+    auto_https disable_redirects
+}
+
 :80 {
-    # Serve frontend static files
-    root * /src/dist
+    encode zstd gzip
+
+    @api path /api/* /static/* /health
+    reverse_proxy @api backend:8080
+
+    root * /srv
+    try_files {path} /index.html
     file_server
 
-    # Proxy API requests to Go backend
-    reverse_proxy /api/* localhost:8080
+    header /assets/* Cache-Control "public, max-age=31536000, immutable"
 }

@@ -226,6 +226,22 @@ func (b *FFmpegCommandBuilder) Build(in CommandBuildInput) ([]string, error) {
 	numImageInputs := len(in.ImagePaths)
 	audioInputStart := numImageInputs
 	var narrationPath []string
+	// Validate narration and music file paths before adding as inputs
+	for i := 0; i < len(in.Audio.ttsNarrationPaths.FileName); i++ {
+		fn := in.Audio.ttsNarrationPaths.FileName[i]
+		p := in.Audio.ttsNarrationPaths.FilePath[fn]
+		if p == "" {
+			return nil, fmt.Errorf("missing narration path for %s", fn)
+		}
+		if _, err := os.Stat(p); err != nil {
+			return nil, fmt.Errorf("missing narration file: %s: %v", p, err)
+		}
+	}
+	if in.Audio.MusicEnabled && in.Audio.MusicPath.MusicPath != "" {
+		if _, err := os.Stat(in.Audio.MusicPath.MusicPath); err != nil {
+			return nil, fmt.Errorf("missing music file: %s: %v", in.Audio.MusicPath.MusicPath, err)
+		}
+	}
 	for i := 0; i < len(in.Audio.ttsNarrationPaths.FileName); i++ {
 		narrationPath = append(narrationPath, in.Audio.ttsNarrationPaths.FilePath[in.Audio.ttsNarrationPaths.FileName[i]])
 		args = append(args, "-i", narrationPath[i])
@@ -235,7 +251,9 @@ func (b *FFmpegCommandBuilder) Build(in CommandBuildInput) ([]string, error) {
 	if len(narrationPath) > 0 {
 		narrIdx = audioInputStart
 		if in.Audio.MusicEnabled && in.Audio.MusicPath.MusicPath != "" {
-			musicIdx = audioInputStart + 1
+			// append music input after narration inputs
+			args = append(args, "-i", in.Audio.MusicPath.MusicPath)
+			musicIdx = audioInputStart + len(narrationPath)
 		}
 	} else if in.Audio.MusicEnabled && in.Audio.MusicPath.MusicPath != "" {
 		// Only music
@@ -246,7 +264,7 @@ func (b *FFmpegCommandBuilder) Build(in CommandBuildInput) ([]string, error) {
 		// Music not yet added (narration present handled earlier). Add now.
 		args = append(args, "-i", in.Audio.MusicPath.MusicPath)
 		if narrIdx >= 0 {
-			musicIdx = narrIdx + 1
+			musicIdx = narrIdx + len(narrationPath)
 		} else {
 			musicIdx = audioInputStart
 		}
@@ -268,8 +286,8 @@ func (b *FFmpegCommandBuilder) Build(in CommandBuildInput) ([]string, error) {
 		// scale to canvas, pad/crop, set fps, set duration
 		// Use: scale, pad (if needed), fps, tpad=stop_mode=clone:stop_duration=duration, setpts=N/(FPS*TB)
 		// Use loop filter to make image into frames: loop=loop=FPS*duration:size=1:start=0, fps=FPS
-		// We'll use: scale=W:H:force_original_aspect_ratio=decrease, pad=W:H:(ow-iw)/2:(oh-ih)/2,format=yuv420p
-		filter += fmt.Sprintf("%s scale=%d:%d:force_original_aspect_ratio=decrease,pad=%d:%d:(ow-iw)/2:(oh-ih)/2,format=yuv420p,fps=%d,trim=duration=%f,setpts=PTS-STARTPTS %s;",
+		// Use tpad to clone last frame to desired duration for still images, then normalize PTS
+		filter += fmt.Sprintf("%s scale=%d:%d:force_original_aspect_ratio=decrease,pad=%d:%d:(ow-iw)/2:(oh-ih)/2,format=yuv420p,fps=%d,tpad=stop_mode=clone:stop_duration=%f,setpts=PTS-STARTPTS %s;",
 			labelIn, in.Metadata_FFmpeg.Width, in.Metadata_FFmpeg.Height, in.Metadata_FFmpeg.Width, in.Metadata_FFmpeg.Height, in.Metadata_FFmpeg.FPS, float64(t.Duration), labelOut)
 		imageStreamCount++
 	}
@@ -308,7 +326,7 @@ func (b *FFmpegCommandBuilder) Build(in CommandBuildInput) ([]string, error) {
 		labelOut := fmt.Sprintf("[vtx%d]", textIdx)
 		enable := fmt.Sprintf("enable='between(t,%.3f,%.3f)'", float64(t.StartTime), float64(t.StartTime+t.Duration))
 		filter += fmt.Sprintf("%s drawtext=text=%s:fontcolor=%s:fontsize=%d:x=%s:y=%s%s:%s %s;",
-			videoLabel, text, colorOrDefault("FFFFFF"), maxInt(0, 12), xy[0], xy[1], bg, enable, labelOut)
+			videoLabel, text, colorOrDefault("white"), maxInt(0, 12), xy[0], xy[1], bg, enable, labelOut)
 		videoLabel = labelOut
 		textIdx++
 	}
