@@ -39,7 +39,7 @@ func LoadAPIConfig() *APIConfig {
 		APIKey:            getEnvOrDefault("API_KEY", ""),
 		ShortVideoBaseURL: getEnvOrDefault("SHORT_VIDEO_BASE_URL", "http://34.66.33.115:3123"),
 		GoogleVeoBaseURL:  getEnvOrDefault("GOOGLE_VEO_BASE_URL", "https://api.google.com/v1"),
-		GoogleVeoAPIKey:   getEnvOrDefault("GOOGLE_VEO_API_KEY", "google_veo_api_key_here"),
+		GoogleVeoAPIKey:   getEnvOrDefault("GOOGLE_VEO_API_KEY", "AIzaSyA7oUcOy_8qygc2tXfwx_wGvSQNSjxue4s"),
 		Port:              getEnvOrDefault("PORT", "8080"),
 	}
 }

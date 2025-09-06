@@ -3,7 +3,9 @@ package handlers
 import (
 	"bytes"
 	"fmt"
+	"log"
 	"strings"
+	"time"
 
 	"io"
 	"mime"
@@ -19,6 +21,10 @@ import (
 	"social-media-ai-video/services"
 
 	"github.com/gin-gonic/gin"
+
+	"context"
+
+	"google.golang.org/genai"
 )
 
 type VideoHandler struct {
@@ -186,6 +192,13 @@ func (vh *VideoHandler) GenerateProReels(c *gin.Context) {
 		return
 	}
 
+	// Guard for prompt
+	prompt := c.PostForm("prompt")
+	if prompt == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "prompt is required"})
+		return
+	}
+
 	mediaType, params, err := mime.ParseMediaType(ct)
 	if err != nil || !strings.HasPrefix(mediaType, "multipart/") {
 		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "invalid multipart content-type"})
@@ -196,122 +209,83 @@ func (vh *VideoHandler) GenerateProReels(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "missing multipart boundary"})
 		return
 	}
-
 	// Reader over incoming multipart body
 	mr := multipart.NewReader(c.Request.Body, boundary)
 
-	// Pipe + multipart writer for upstream request body
-	pr, pw := io.Pipe()
-	mw := multipart.NewWriter(pw)
-
-	started := false
-	respCh := make(chan *http.Response, 1)
-	errCh := make(chan error, 1)
-
-	startUpstream := func() {
-		if started {
-			return
-		}
-		started = true
-		go func() {
-			req, err := http.NewRequestWithContext(c.Request.Context(), http.MethodPost, vh.cfg.GoogleVeoBaseURL, pr)
-			if err != nil {
-				errCh <- err
-				return
-			}
-			req.Header.Set("Content-Type", mw.FormDataContentType())
-			if vh.cfg.GoogleVeoAPIKey != "" {
-				req.Header.Set("Authorization", "Bearer "+vh.cfg.GoogleVeoAPIKey)
-			}
-			resp, err := http.DefaultClient.Do(req)
-			if err != nil {
-				errCh <- err
-				return
-			}
-			respCh <- resp
-		}()
-	}
-
-	imagesSeen := 0
+	// Read the first image part into memory (SDK requires []byte). Limit size to 25MB.
+	var img *genai.Image
 	for {
 		part, err := mr.NextPart()
 		if err == io.EOF {
 			break
 		}
 		if err != nil {
-			_ = pw.CloseWithError(err)
 			c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": fmt.Sprintf("read part error: %v", err)})
 			return
 		}
-		fn := part.FileName()
-		field := part.FormName()
-		if field == "image" && fn != "" {
-			outPart, err := mw.CreateFormFile("image", fn)
-			if err != nil {
-				_ = pw.CloseWithError(err)
-				c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": fmt.Sprintf("create upstream file part: %v", err)})
+		if part.FileName() != "" && part.FormName() == "image" {
+			lr := io.LimitReader(part, 25<<20)
+			b, rerr := io.ReadAll(lr)
+			part.Close()
+			if rerr != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": fmt.Sprintf("read image error: %v", rerr)})
 				return
 			}
-			if _, err := io.Copy(outPart, part); err != nil {
-				_ = pw.CloseWithError(err)
-				c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": fmt.Sprintf("copy image error: %v", err)})
-				return
+			mimeType := part.Header.Get("Content-Type")
+			if mimeType == "" {
+				mimeType = mime.TypeByExtension(filepath.Ext(part.FileName()))
+				if mimeType == "" {
+					mimeType = "image/jpeg"
+				}
 			}
-			imagesSeen++
-			if imagesSeen == 1 {
-				startUpstream()
-			}
-		} else if field != "" && fn == "" {
-			outField, err := mw.CreateFormField(field)
-			if err != nil {
-				_ = pw.CloseWithError(err)
-				c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": fmt.Sprintf("create upstream field: %v", err)})
-				return
-			}
-			if _, err := io.Copy(outField, part); err != nil {
-				_ = pw.CloseWithError(err)
-				c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": fmt.Sprintf("copy field error: %v", err)})
-				return
-			}
+			img = &genai.Image{ImageBytes: b, MIMEType: mimeType}
+			break
 		}
 		part.Close()
 	}
-
-	if imagesSeen == 0 {
-		_ = pw.CloseWithError(fmt.Errorf("at least one image is required (field name: image)"))
-		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "at least one image is required (field name: image)"})
+	// Optional: prompt-only if no image provided
+	ctx := context.Background()
+	client, err := genai.NewClient(ctx, nil)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": fmt.Sprintf("failed to initialize google veo client: %v", err)})
 		return
 	}
 
-	if err := mw.Close(); err != nil {
-		_ = pw.CloseWithError(err)
-		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": fmt.Sprintf("finalize upstream multipart: %v", err)})
+	operation, err := client.Models.GenerateVideos(ctx, "veo-3.0-generate-preview", prompt, img, nil)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": fmt.Sprintf("generate videos failed: %v", err)})
 		return
 	}
-	_ = pw.Close()
 
-	startUpstream()
-
-	select {
-	case err := <-errCh:
-		c.JSON(http.StatusBadGateway, gin.H{"status": "error", "error": fmt.Sprintf("upstream error: %v", err)})
-		return
-	case resp := <-respCh:
-		defer resp.Body.Close()
-		ctOut := resp.Header.Get("Content-Type")
-		if ctOut == "" {
-			ctOut = "application/octet-stream"
-		}
-		c.Status(resp.StatusCode)
-		c.Header("Content-Type", ctOut)
-		if cl := resp.Header.Get("Content-Length"); cl != "" {
-			c.Header("Content-Length", cl)
-		}
-		if _, err := io.Copy(c.Writer, resp.Body); err != nil {
+	for !operation.Done {
+		log.Println("Waiting for video generation to complete...")
+		time.Sleep(10 * time.Second)
+		operation, err = client.Operations.GetVideosOperation(ctx, operation, nil)
+		if err != nil {
+			c.JSON(http.StatusBadGateway, gin.H{"status": "error", "error": fmt.Sprintf("poll operation failed: %v", err)})
 			return
 		}
+	}
+
+	if operation.Response == nil || len(operation.Response.GeneratedVideos) == 0 || operation.Response.GeneratedVideos[0] == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": "no video generated"})
 		return
 	}
+	v := operation.Response.GeneratedVideos[0]
+	data, err := client.Files.Download(ctx, genai.NewDownloadURIFromGeneratedVideo(v), nil)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": fmt.Sprintf("download failed: %v", err)})
+		return
+	}
+	ctOut := v.Video.MIMEType
+	if ctOut == "" {
+		ctOut = "video/mp4"
+	}
+	c.Status(http.StatusOK)
+	c.Header("Content-Type", ctOut)
+	c.Header("Content-Length", fmt.Sprintf("%d", len(data)))
+	_, _ = c.Writer.Write(data)
+	return
 }
 
 // this function is currently broken; fix later

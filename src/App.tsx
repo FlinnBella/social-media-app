@@ -35,9 +35,13 @@ function App() {
     setSelectedFiles((prev) => [...prev, ...imageFiles]);
   };
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     
+    // Determine which submit button triggered the submit
+    const submitter = (e.nativeEvent as any)?.submitter as HTMLButtonElement | null;
+    const api = submitter?.value === 'veo3' ? 'veo3' : 'ffmpeg';
+
     if (!inputText.trim() || selectedFiles.length === 0) 
       {return toast.error('Please enter a prompt and upload a file');};
 
@@ -65,10 +69,11 @@ for (const [key, value] of formData.entries()) {
     console.log(key, value);
   }
 }
-    const response = await fetch('http://localhost:8080/api/generate-video-reels', {
-        method: 'POST',
-        body: formData,
-      });
+let response: Response;
+const url = api === 'veo3'
+  ? 'http://localhost:8080/api/generate-video-pro-reels'
+  : 'http://localhost:8080/api/generate-video-reels';
+response = await fetch(url, { method: 'POST', body: formData });
 
       const contentType = response.headers.get('content-type') || '';
 
@@ -216,8 +221,20 @@ for (const [key, value] of formData.entries()) {
                   </div>
                   <button
                     type="submit"
+                    name="video-api"
+                    value="ffmpeg"
                     disabled={isLoading || (!inputText.trim() && selectedFiles.length === 0)}
                     className="p-3 bg-gradient-to-r from-pink-400 to-pink-500 text-white rounded-xl hover:from-pink-500 hover:to-pink-600 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200 hover:scale-105"
+                  >
+                    <Send className="w-5 h-5" />
+                  </button>
+
+                  <button
+                    type="submit"
+                    name="video-api"
+                    value="veo3"
+                    disabled={isLoading || (!inputText.trim() && selectedFiles.length === 0)}
+                    className="p-3 bg-gradient-to-r from-green-400 to-green-500 text-white rounded-xl hover:from-pink-500 hover:to-pink-600 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200 hover:scale-105"
                   >
                     <Send className="w-5 h-5" />
                   </button>
@@ -259,6 +276,9 @@ for (const [key, value] of formData.entries()) {
                     <Camera className="w-4 h-4" />
                     <span>Camera</span>
                   </button>
+                  <div className="text-sm text-center text-gray-600 font-ibm">
+                    <p>Use FFMPEG for free, or Google Veo3 for a paid plan</p>
+                  </div>
                 </div>
               </form>
               ):    
