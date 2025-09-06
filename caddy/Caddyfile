@@ -1,5 +1,7 @@
 {
     auto_https disable_redirects
+    http_port 5138
+    https_port 5139
 }
 
 :80 {

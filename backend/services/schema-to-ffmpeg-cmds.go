@@ -214,19 +214,26 @@ func (b *FFmpegCommandBuilder) Build(in CommandBuildInput) ([]string, error) {
 	sort.Slice(sorted, func(i, j int) bool { return sorted[i].StartTime < sorted[j].StartTime })
 
 	// Input list: images + audio(s)
+	/*
+	   # FFMPEG CMD STARTS HERE
+	*/
 	args := []string{"-y"}
 
 	// Image inputs (each once); we will reference by indices
 	for _, p := range in.ImagePaths {
-		// Images as looping inputs turned into video in filters using loop filter
+		// APPEND IMAGES AS INPUTS INTO FFMPEG - FIRST INPUT APPEND
 		args = append(args, "-i", p)
 	}
 
 	// Audio inputs appended at the end so index math is predictable
 	numImageInputs := len(in.ImagePaths)
 	audioInputStart := numImageInputs
-	var narrationPath []string
 	// Validate narration and music file paths before adding as inputs
+
+	musicIdx := -1
+	narrIdx := -1
+
+	// guard against invalid tts directory, or filename
 	for i := 0; i < len(in.Audio.ttsNarrationPaths.FileName); i++ {
 		fn := in.Audio.ttsNarrationPaths.FileName[i]
 		p := in.Audio.ttsNarrationPaths.FilePath[fn]
@@ -237,37 +244,25 @@ func (b *FFmpegCommandBuilder) Build(in CommandBuildInput) ([]string, error) {
 			return nil, fmt.Errorf("missing narration file: %s: %v", p, err)
 		}
 	}
+	//end guard
+
+	// guard against invalid music file path, or directory
 	if in.Audio.MusicEnabled && in.Audio.MusicPath.MusicPath != "" {
 		if _, err := os.Stat(in.Audio.MusicPath.MusicPath); err != nil {
 			return nil, fmt.Errorf("missing music file: %s: %v", in.Audio.MusicPath.MusicPath, err)
 		}
 	}
 	for i := 0; i < len(in.Audio.ttsNarrationPaths.FileName); i++ {
-		narrationPath = append(narrationPath, in.Audio.ttsNarrationPaths.FilePath[in.Audio.ttsNarrationPaths.FileName[i]])
-		args = append(args, "-i", narrationPath[i])
-	}
-	musicIdx := -1
-	narrIdx := -1
-	if len(narrationPath) > 0 {
+		args = append(args, "-i", in.Audio.ttsNarrationPaths.FilePath[in.Audio.ttsNarrationPaths.FileName[i]])
+
+		//init elevenlabs tts file(s)
 		narrIdx = audioInputStart
-		if in.Audio.MusicEnabled && in.Audio.MusicPath.MusicPath != "" {
-			// append music input after narration inputs
-			args = append(args, "-i", in.Audio.MusicPath.MusicPath)
-			musicIdx = audioInputStart + len(narrationPath)
-		}
-	} else if in.Audio.MusicEnabled && in.Audio.MusicPath.MusicPath != "" {
-		// Only music
-		args = append(args, "-i", in.Audio.MusicPath.MusicPath)
-		musicIdx = audioInputStart
 	}
 	if in.Audio.MusicEnabled && in.Audio.MusicPath.MusicPath != "" && musicIdx == -1 {
 		// Music not yet added (narration present handled earlier). Add now.
 		args = append(args, "-i", in.Audio.MusicPath.MusicPath)
-		if narrIdx >= 0 {
-			musicIdx = narrIdx + len(narrationPath)
-		} else {
-			musicIdx = audioInputStart
-		}
+	} else {
+		musicIdx = audioInputStart + len(in.Audio.ttsNarrationPaths.FileName) - 1
 	}
 
 	// Build filter_complex
@@ -326,7 +321,7 @@ func (b *FFmpegCommandBuilder) Build(in CommandBuildInput) ([]string, error) {
 		labelOut := fmt.Sprintf("[vtx%d]", textIdx)
 		enable := fmt.Sprintf("enable='between(t,%.3f,%.3f)'", float64(t.StartTime), float64(t.StartTime+t.Duration))
 		filter += fmt.Sprintf("%s drawtext=text=%s:fontcolor=%s:fontsize=%d:x=%s:y=%s%s:%s %s;",
-			videoLabel, text, colorOrDefault("white"), maxInt(0, 12), xy[0], xy[1], bg, enable, labelOut)
+			videoLabel, text, colorOrDefault("black"), maxInt(0, 24), xy[0], xy[1], bg, enable, labelOut)
 		videoLabel = labelOut
 		textIdx++
 	}
@@ -338,32 +333,36 @@ func (b *FFmpegCommandBuilder) Build(in CommandBuildInput) ([]string, error) {
 		finalVideoLabel = "[vout]"
 	}
 
-	// Audio mixing
-	audioMap := ""
-	if narrIdx >= 0 && musicIdx >= 0 {
+	// Audio processing: build modular stems [ma] (music) and [na] (narration), then create mixed [mixa]
+	audioMaps := []string{}
+	// Music stem
+	if musicIdx >= 0 {
 		mv := clamp01(in.Audio.MusicVolume)
-		nv := in.Audio.NarrationVolume
-		if nv <= 0 {
-			nv = 1.0
-		}
-		filter += fmt.Sprintf("[%d:a]volume=%0.2f[na];", narrIdx, nv)
-		filter += fmt.Sprintf("[%d:a]volume=%0.2f[ma];", musicIdx, mv)
-		filter += "[na][ma]amix=inputs=2:duration=first:dropout_transition=2[aout];"
-		audioMap = "[aout]"
-	} else if narrIdx >= 0 {
-		filter += fmt.Sprintf("[%d:a]volume=%0.2f[aout];", narrIdx, maxFloat(in.Audio.NarrationVolume, 1.0))
-		audioMap = "[aout]"
-	} else if musicIdx >= 0 {
-		filter += fmt.Sprintf("[%d:a]volume=%0.2f[aout];", musicIdx, clamp01(in.Audio.MusicVolume))
-		audioMap = "[aout]"
+		filter += fmt.Sprintf("[%d:a]volume=%0.2f,atrim=0:%f,asetpts=PTS-STARTPTS[ma];", musicIdx, mv, float64(in.Metadata_FFmpeg.TotalDuration))
+	}
+	// Narration stem
+	nv := in.Audio.NarrationVolume
+	if nv <= 0 {
+		nv = 1.0
+	}
+	filter += fmt.Sprintf("[%d:a]volume=%0.2f,apad,atrim=0:%f,asetpts=PTS-STARTPTS[na];", narrIdx, nv, float64(in.Metadata_FFmpeg.TotalDuration))
+	// Mixed overlay track
+	if musicIdx >= 0 {
+		filter += "[na][ma]amix=inputs=2:duration=longest:dropout_transition=2[mixa];"
+		audioMaps = []string{"[mixa]"}
+	} else {
+		// No music present; fall back to narration only
+		audioMaps = []string{"[na]"}
 	}
 
 	args = append(args,
 		"-filter_complex", filter,
 		"-map", finalVideoLabel,
 	)
-	if audioMap != "" {
-		args = append(args, "-map", audioMap)
+	if len(audioMaps) > 0 {
+		for _, am := range audioMaps {
+			args = append(args, "-map", am)
+		}
 	} else {
 		args = append(args, "-an")
 	}
@@ -377,7 +376,7 @@ func (b *FFmpegCommandBuilder) Build(in CommandBuildInput) ([]string, error) {
 		"-preset", "fast",
 		"-crf", "23",
 	)
-	if audioMap != "" {
+	if len(audioMaps) > 0 {
 		args = append(args, "-c:a", "aac")
 	}
 

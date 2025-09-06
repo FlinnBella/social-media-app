@@ -9,7 +9,10 @@ type APIConfig struct {
 	N8NPLEXELSURL     string
 	N8NREELSURL       string
 	N8NAPIKey         string
+	APIKey            string
 	ShortVideoBaseURL string
+	GoogleVeoBaseURL  string
+	GoogleVeoAPIKey   string
 	Port              string
 }
 
@@ -20,10 +23,10 @@ func LoadAPIConfig() *APIConfig {
 	// Base URLs (can be overridden below)
 	N8NPLEXELSURL := getEnvOrDefault("N8N_PLEXELS_URL", "https://evandickinson.app.n8n.cloud/webhook/pexels-workflow")
 	N8NREELSURL := getEnvOrDefault("N8N_REELS_URL", "https://evandickinson.app.n8n.cloud/webhook/reels-workflow")
-	if env == "development" {
-		N8NPLEXELSURL = getEnvOrDefault("N8N_PLEXELS_URL", "https://evandickinson.app.n8n.cloud/webhook-test/pexels-workflow")
-		N8NREELSURL = getEnvOrDefault("N8N_REELS_URL", "https://evandickinson.app.n8n.cloud/webhook-test/reels-workflow")
-	}
+	//if env == "development" {
+	//	N8NPLEXELSURL = getEnvOrDefault("N8N_PLEXELS_URL", "https://evandickinson.app.n8n.cloud/webhook-test/pexels-workflow")
+	//	N8NREELSURL = getEnvOrDefault("N8N_REELS_URL", "https://evandickinson.app.n8n.cloud/webhook-test/reels-workflow")
+	//}
 
 	return &APIConfig{
 		Environment: env,
@@ -33,7 +36,10 @@ func LoadAPIConfig() *APIConfig {
 		N8NPLEXELSURL:     N8NPLEXELSURL,
 		N8NREELSURL:       N8NREELSURL,
 		N8NAPIKey:         getEnvOrDefault("N8N_API_KEY", "n8n_api_key_here"),
+		APIKey:            getEnvOrDefault("API_KEY", ""),
 		ShortVideoBaseURL: getEnvOrDefault("SHORT_VIDEO_BASE_URL", "http://34.66.33.115:3123"),
+		GoogleVeoBaseURL:  getEnvOrDefault("GOOGLE_VEO_BASE_URL", "https://api.google.com/v1"),
+		GoogleVeoAPIKey:   getEnvOrDefault("GOOGLE_VEO_API_KEY", "google_veo_api_key_here"),
 		Port:              getEnvOrDefault("PORT", "8080"),
 	}
 }
