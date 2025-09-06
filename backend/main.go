@@ -62,7 +62,8 @@ func main() {
 	{
 		api.POST("/generate-video-pexels", videoHandler.GenerateVideoPexels)
 		api.POST("/generate-video-reels", videoHandler.GenerateVideoReels)
-		api.POST("/generate-video-pro-reels", requireAPIKey(cfg), videoHandler.GenerateProReels)
+		api.POST("/generate-video-pro-reels", videoHandler.GenerateProReels)
+		//add requireAPIKey middleware later
 		//api.GET("/composition", videoHandler.GetComposition)
 	}
 

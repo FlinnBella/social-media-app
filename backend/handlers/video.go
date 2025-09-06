@@ -192,12 +192,7 @@ func (vh *VideoHandler) GenerateProReels(c *gin.Context) {
 		return
 	}
 
-	// Guard for prompt
-	prompt := c.PostForm("prompt")
-	if prompt == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "prompt is required"})
-		return
-	}
+	// Do NOT call c.PostForm here; it would consume the body. We'll read prompt from parts below.
 
 	mediaType, params, err := mime.ParseMediaType(ct)
 	if err != nil || !strings.HasPrefix(mediaType, "multipart/") {
@@ -212,8 +207,9 @@ func (vh *VideoHandler) GenerateProReels(c *gin.Context) {
 	// Reader over incoming multipart body
 	mr := multipart.NewReader(c.Request.Body, boundary)
 
-	// Read the first image part into memory (SDK requires []byte). Limit size to 25MB.
+	// Read prompt and the first image part into memory (SDK requires []byte). Limit image size to 25MB.
 	var img *genai.Image
+	prompt := ""
 	for {
 		part, err := mr.NextPart()
 		if err == io.EOF {
@@ -239,13 +235,28 @@ func (vh *VideoHandler) GenerateProReels(c *gin.Context) {
 				}
 			}
 			img = &genai.Image{ImageBytes: b, MIMEType: mimeType}
-			break
+			// do not break; continue scanning parts to also capture prompt
+		} else if part.FileName() == "" && part.FormName() == "prompt" {
+			b, rerr := io.ReadAll(part)
+			part.Close()
+			if rerr != nil {
+				c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": fmt.Sprintf("read prompt error: %v", rerr)})
+				return
+			}
+			prompt = string(b)
 		}
 		part.Close()
 	}
+
+	if strings.TrimSpace(prompt) == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "prompt is required"})
+		return
+	}
 	// Optional: prompt-only if no image provided
 	ctx := context.Background()
-	client, err := genai.NewClient(ctx, nil)
+	client, err := genai.NewClient(ctx, &genai.ClientConfig{
+		APIKey: vh.cfg.GoogleVeoAPIKey,
+	})
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": fmt.Sprintf("failed to initialize google veo client: %v", err)})
 		return
