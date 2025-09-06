@@ -64,7 +64,7 @@ func (els *ElevenLabsService) GenerateSpeechToTmp(input models.TTSInput, tmpDir 
 	}
 
 	// For now, hardcode the voice ID
-	voiceId := "tvWD4i07Hg5L4uEvbxYV"
+	voiceId := "Dslrhjl3ZpzrctukrQSN"
 
 	url := fmt.Sprintf("%s/text-to-speech/%s", els.config.ElevenLabsBaseURL, voiceId)
 	req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonData))
