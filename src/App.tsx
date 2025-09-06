@@ -234,7 +234,7 @@ response = await fetch(url, { method: 'POST', body: formData });
                     name="video-api"
                     value="veo3"
                     disabled={isLoading || (!inputText.trim() && selectedFiles.length === 0)}
-                    className="p-3 bg-gradient-to-r from-green-400 to-green-500 text-white rounded-xl hover:from-pink-500 hover:to-pink-600 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200 hover:scale-105"
+                    className="p-3 bg-gradient-to-r from-green-400 to-green-500 text-white rounded-xl hover:from-green-500 hover:to-green-600 disabled:opacity-50 disabled:cursor-not-allowed transition-all duration-200 hover:scale-105"
                   >
                     <Send className="w-5 h-5" />
                   </button>
