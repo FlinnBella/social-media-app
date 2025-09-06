@@ -3,10 +3,19 @@
 FROM node:20-bullseye AS frontend
 WORKDIR /app
 
+# 1) Install deps using only lockfiles for caching
 COPY package.json package-lock.json ./
 RUN npm ci
 
-COPY . .
+# 2) Copy only files needed for Vite build to maximize cache hits
+COPY index.html ./
+COPY vite.config.* ./
+COPY tsconfig*.json ./
+COPY postcss.config.js ./
+COPY tailwind.config.js ./
+COPY src ./src
+
+# 3) Build the frontend
 RUN npm run build
 
 
