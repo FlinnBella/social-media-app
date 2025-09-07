@@ -69,6 +69,8 @@ function App() {
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
+  const [showTimeline, setShowTimeline] = useState(false);
+  const [showFinalVideo, setShowFinalVideo] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
   

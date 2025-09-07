@@ -29,8 +29,8 @@ services:
     depends_on:
       - backend
     ports:
-      - "127.0.0.1:8080:80"
-      - "127.0.0.1:8443:443"
+      - "80:80"
+      - "443:443"
     restart: unless-stopped
 
 networks:

@@ -1,17 +1,18 @@
 {
-    auto_https disable_redirects
-
+    email evan.dickinson.flinn@gmail.com
 }
 
-:80 {
+caliproject.duckdns.org, localhost {
     encode zstd gzip
-
+    
     @api path /api/* /static/* /health
-    reverse_proxy @api backend:8080
-
-    root * /srv
-    try_files {path} /index.html
-    file_server
-
+    
+    route {
+        reverse_proxy @api backend:8080
+        root * /srv
+        try_files {path} /index.html
+        file_server
+    }
+    
     header /assets/* Cache-Control "public, max-age=31536000, immutable"
 }

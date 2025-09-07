@@ -1,10 +1,11 @@
 # Multi-stage build for the Go API with ffmpeg in the runtime image
 
-FROM golang:1.21-bookworm AS builder
+FROM golang:1.23-bookworm AS builder
 WORKDIR /app/backend
 
 # Cache deps
 COPY backend/go.mod backend/go.sum ./
+ENV GOTOOLCHAIN=auto
 RUN go mod download
 
 # Copy source
