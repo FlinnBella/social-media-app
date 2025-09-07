@@ -139,9 +139,11 @@ function App() {
         formData.append('image', file, file.name);
       }
 
-      const url = apiType === 'veo3'
-        ? 'http://localhost:8080/api/generate-video-pro-reels'
-        : 'http://localhost:8080/api/generate-video-reels';
+      const apiBase = import.meta.env.PROD ? '/api' : 'http://localhost:8080/api';
+      const endpoint = apiType === 'veo3'
+        ? '/generate-video-pro-reels'
+        : '/generate-video-reels';
+      const url = `${apiBase}${endpoint}`;
       
       const response = await fetch(url, { method: 'POST', body: formData });
       const contentType = response.headers.get('content-type') || '';
