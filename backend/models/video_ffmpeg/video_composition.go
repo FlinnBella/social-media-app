@@ -1,4 +1,4 @@
-package models
+package video_ffmpeg
 
 type VideoCompositionResponse struct {
 	Metadata Metadata `json:"metadata"`

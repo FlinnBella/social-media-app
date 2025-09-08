@@ -11,6 +11,8 @@ import (
 	"io"
 	"mime/multipart"
 	"net/http"
+
+	"social-media-ai-video/models/video_ffmpeg"
 )
 
 type ContentGenerator struct {
@@ -26,7 +28,7 @@ func NewContentGenerator(cfg *config.APIConfig) *ContentGenerator {
 // and returns the saved filename (basename).
 // GenerateVideoMultipart streams prompt + images to the selected source webhook as multipart/form-data.
 // It posts to the appropriate N8N URL based on the given VideoSource and returns the parsed response.
-func (cg *ContentGenerator) GenerateVideoSchemaMultipart(videoRequest models.VideoGenerationRequest) (*models.VideoCompositionResponse, error) {
+func (cg *ContentGenerator) GenerateVideoSchemaMultipart(videoRequest models.VideoGenerationRequest) (*video_ffmpeg.VideoCompositionResponse, error) {
 	var targetURL string
 	switch videoRequest.Source {
 	case models.VideoSourceReels:
@@ -82,7 +84,7 @@ func (cg *ContentGenerator) GenerateVideoSchemaMultipart(videoRequest models.Vid
 		return nil, fmt.Errorf("upstream error: %s - %s", resp.Status, string(respBytes))
 	}
 
-	var parsed models.VideoCompositionResponse
+	var parsed video_ffmpeg.VideoCompositionResponse
 	if err := json.Unmarshal(respBytes, &parsed); err != nil {
 		return nil, fmt.Errorf("failed to decode upstream response: %v", err)
 	}

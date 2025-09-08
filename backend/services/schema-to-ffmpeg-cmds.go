@@ -5,7 +5,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	models "social-media-ai-video/models"
+	"social-media-ai-video/models"
+	"social-media-ai-video/models/video_ffmpeg"
 	"sort"
 	"strconv"
 	"time"
@@ -54,7 +55,7 @@ type Metadata_FFmpeg struct {
 
 type CommandBuildInput struct {
 	Metadata_FFmpeg Metadata_FFmpeg
-	Timeline        models.Timeline
+	Timeline        video_ffmpeg.Timeline
 	// Images referenced by index in timeline (ImageIndex)
 	ImagePaths []string
 	// Audio assets
@@ -91,7 +92,7 @@ type Compilier interface {
 // Compile takes the AI JSON blob and image paths (ordered by index) and returns ffmpeg args and resolved output paths used.
 func (cc *CompositionCompiler) Compile(jsonAISchemaBlob []byte, imagePaths []string) ([]string, []string, string, error) {
 	//schema object
-	var vc models.VideoCompositionResponse
+	var vc video_ffmpeg.VideoCompositionResponse
 
 	// unwrap optional top-level {"output": ...} wrapper if present
 	var outer struct {
@@ -209,7 +210,7 @@ func (b *FFmpegCommandBuilder) Build(in CommandBuildInput) ([]string, error) {
 	}
 
 	// Sort timeline by start time to build proper concat order
-	sorted := make([]models.ImageSegment, len(in.Timeline.ImageTimeline.ImageSegments))
+	sorted := make([]video_ffmpeg.ImageSegment, len(in.Timeline.ImageTimeline.ImageSegments))
 	copy(sorted, in.Timeline.ImageTimeline.ImageSegments)
 	sort.Slice(sorted, func(i, j int) bool { return sorted[i].StartTime < sorted[j].StartTime })
 

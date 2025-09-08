@@ -1,5 +1,8 @@
 package models
 
+//this is going down a bad road
+import "social-media-ai-video/models/video_ffmpeg"
+
 type TTSSegment struct {
 	Text     string `json:"text"`
 	Start    int    `json:"start"`
@@ -8,6 +11,6 @@ type TTSSegment struct {
 }
 
 type TTSInput struct {
-	TextInput     []TextSegment `json:"textInput"`
-	VoiceSettings TTSVoice      `json:"voiceSettings"`
+	TextInput     []video_ffmpeg.TextSegment `json:"textInput"`
+	VoiceSettings video_ffmpeg.TTSVoice      `json:"voiceSettings"`
 }
