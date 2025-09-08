@@ -1,4 +1,4 @@
-import type { ImageSegment } from '@/hooks/useMultiPartFormData';
+import type { ImageSegment } from '#types/multipart';
 
 export const TimelineCard = ({ segment }: { segment: ImageSegment }) => {
     return (

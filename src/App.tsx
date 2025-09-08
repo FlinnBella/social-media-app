@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import { toast } from 'sonner';
 import { Upload, Camera } from 'lucide-react';
 import { Textarea } from '@/components/ui/textarea';
@@ -14,7 +14,7 @@ import {
  
 import SocialSharePanel from '@/components/SocialSharePanel';
 import { useMultiPartFormData, MULTIPART_ACTIONS } from '@/hooks/useMultiPartFormData';
-import type { TimelineStageResponse, FinalVideoResponse, ImageSegment } from '@/hooks/useMultiPartFormData';
+import type { TimelineStageResponse, FinalVideoResponse, ImageSegment } from '#types/multipart';
 import VideoContainer from '@/components/VideoScreen/VideoContainer';
 
 interface Message {
@@ -41,8 +41,6 @@ function App() {
   const [previewUrls, setPreviewUrls] = useState<string[]>([]);
   const [timelineSegments, setTimelineSegments] = useState<ImageSegment[] | null>(null);
   const [pendingApproval, setPendingApproval] = useState(false);
-  const [approveUrl, setApproveUrl] = useState<string | null>(null);
-  const [sseUrl, setSseUrl] = useState<string | null>(null);
   
   const fileInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);

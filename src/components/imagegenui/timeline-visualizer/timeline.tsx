@@ -1,7 +1,7 @@
-import React, { useState } from 'react';
+import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { TimelineCard } from './timelinecard';
-import type { ImageSegment } from '@/hooks/useMultiPartFormData';
+import type { ImageSegment } from '#types/multipart';
 // when it's invoked, it's going to be done so via a fetch call
 //fetch call is going to fill it with a bunch of data,
 //data gets decomposed to the image segments
@@ -19,9 +19,9 @@ const MapImageSegments = (ImageSegments: ImageSegment[]) => {
 
 const GenerateVideo = async () => {
     setIsLoading(true);
-    const response = await fetch('/api/generate-video', {
+    await fetch('/api/generate-video', {
         method: 'POST',
-        body: FormData
+        body: new FormData()
     });
     setIsLoading(false);
 }

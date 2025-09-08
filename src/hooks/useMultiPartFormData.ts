@@ -1,4 +1,5 @@
 import { toast } from "sonner";
+import type { TimelineStageResponse, FinalVideoResponse, MultiPartAction } from "#types/multipart";
 
 export const MULTIPART_ACTIONS = {
     SendImageTimeline: 'SendImageTimeline',
@@ -6,27 +7,7 @@ export const MULTIPART_ACTIONS = {
     finalVideo: 'finalVideo',
 } as const;
 
-export type MultiPartAction = typeof MULTIPART_ACTIONS[keyof typeof MULTIPART_ACTIONS];
-
-export interface ImageSegment {
-    id: string;
-    ordering: number;
-    image: string; // could be URL or data URL
-    script: string; //coupling of text and image a bit here
-}
-
-export interface TimelineStageResponse {
-    ok: boolean;
-    error?: string;
-    timeline?: ImageSegment[];
-    batchId?: string;
-}
-
-export interface FinalVideoResponse {
-    ok: boolean;
-    error?: string;
-    videoUrl?: string; // blob/object URL or remote URL
-}
+export type MultiPartActionsMap = typeof MULTIPART_ACTIONS;
 
 // take in the actual formdata, what action is occuring
 // then perform that keeping the server url in mind

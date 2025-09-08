@@ -1,7 +1,7 @@
 import React from 'react';
 import { Monitor, Smartphone } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import type { ImageSegment } from '@/hooks/useMultiPartFormData';
+import type { ImageSegment } from '#types/multipart';
 import { Timeline } from '@/components/VideoScreen/imagegenui/timeline-visualizer/timeline';
 
 interface VideoContainerProps {
