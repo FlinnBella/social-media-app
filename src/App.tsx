@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { toast } from 'sonner';
-import { ArrowRight, Upload, Camera, Monitor, Smartphone, Download } from 'lucide-react';
+import { Upload, Camera } from 'lucide-react';
 import { Textarea } from '@/components/ui/textarea';
 import { cn } from '@/lib/utils';
 import { useAutoResizeTextarea } from '@/hooks/use-auto-resize-textarea';
@@ -11,7 +11,11 @@ import {
     DropdownMenuItem,
     DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
-import { motion, AnimatePresence } from 'motion/react';
+ 
+import SocialSharePanel from '@/components/SocialSharePanel';
+import { useMultiPartFormData, MULTIPART_ACTIONS } from '@/hooks/useMultiPartFormData';
+import type { TimelineStageResponse, FinalVideoResponse, ImageSegment } from '@/hooks/useMultiPartFormData';
+import VideoContainer from '@/components/VideoScreen/VideoContainer';
 
 interface Message {
   id: string;
@@ -27,41 +31,6 @@ interface Message {
   };
 }
 
-// Social Media Brand SVGs
-const InstagramSVG = () => (
-  <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
-    <defs>
-      <linearGradient id="instagram-gradient" x1="0%" y1="0%" x2="100%" y2="100%">
-        <stop offset="0%" stopColor="#f09433" />
-        <stop offset="25%" stopColor="#e6683c" />
-        <stop offset="50%" stopColor="#dc2743" />
-        <stop offset="75%" stopColor="#cc2366" />
-        <stop offset="100%" stopColor="#bc1888" />
-      </linearGradient>
-    </defs>
-    <rect x="2" y="2" width="20" height="20" rx="5" ry="5" fill="url(#instagram-gradient)" />
-    <path d="M16 11.37A4 4 0 1 1 12.63 8 4 4 0 0 1 16 11.37z" fill="white" />
-    <line x1="17.5" y1="6.5" x2="17.51" y2="6.5" stroke="white" strokeWidth="2" strokeLinecap="round" />
-  </svg>
-);
-
-const TikTokSVG = () => (
-  <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
-    <path d="M19.59 6.69a4.83 4.83 0 0 1-3.77-4.25V2h-3.45v13.67a2.89 2.89 0 0 1-5.2 1.74 2.89 2.89 0 0 1 2.31-4.64 2.93 2.93 0 0 1 .88.13V9.4a6.84 6.84 0 0 0-1-.05A6.33 6.33 0 0 0 5 20.1a6.34 6.34 0 0 0 10.86-4.43v-7a8.16 8.16 0 0 0 4.77 1.52v-3.4a4.85 4.85 0 0 1-1-.1z" fill="#000"/>
-  </svg>
-);
-
-const TwitterSVG = () => (
-  <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
-    <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z" fill="#000"/>
-  </svg>
-);
-
-const FacebookSVG = () => (
-  <svg width="24" height="24" viewBox="0 0 24 24" fill="none">
-    <path d="M24 12.073c0-6.627-5.373-12-12-12s-12 5.373-12 12c0 5.99 4.388 10.954 10.125 11.854v-8.385H7.078v-3.47h3.047V9.43c0-3.007 1.792-4.669 4.533-4.669 1.312 0 2.686.235 2.686.235v2.953H15.83c-1.491 0-1.956.925-1.956 1.874v2.25h3.328l-.532 3.47h-2.796v8.385C19.612 23.027 24 18.062 24 12.073z" fill="#1877F2"/>
-  </svg>
-);
 
 function App() {
   const [messages, setMessages] = useState<Message[]>([]);
@@ -69,10 +38,15 @@ function App() {
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [isLoading, setIsLoading] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
-  const [showTimeline, setShowTimeline] = useState(false);
-  const [showFinalVideo, setShowFinalVideo] = useState(false);
+  const [previewUrls, setPreviewUrls] = useState<string[]>([]);
+  const [timelineSegments, setTimelineSegments] = useState<ImageSegment[] | null>(null);
+  const [pendingApproval, setPendingApproval] = useState(false);
+  const [approveUrl, setApproveUrl] = useState<string | null>(null);
+  const [sseUrl, setSseUrl] = useState<string | null>(null);
+  
   const fileInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
+  const previewUrlsRef = useRef<string[]>([]);
   
   const { textareaRef, adjustHeight } = useAutoResizeTextarea({
     minHeight: 72,
@@ -89,18 +63,30 @@ function App() {
     return () => window.removeEventListener('resize', checkMobile);
   }, []);
 
-  const downloadVideo = () => {
-    const lastMessage = messages[messages.length - 1];
-    if (!lastMessage?.videoUrl) return;
-    
-    const link = document.createElement('a');
-    link.href = lastMessage.videoUrl;
-    link.download = `property-video-${Date.now()}.mp4`;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    toast.success('Video downloaded successfully!');
+  useEffect(() => {
+    // Revoke previously created URLs before creating new ones
+    previewUrlsRef.current.forEach((url) => {
+      try { URL.revokeObjectURL(url); } catch {}
+    });
+    const urls = selectedFiles.map((file) => URL.createObjectURL(file));
+    previewUrlsRef.current = urls;
+    setPreviewUrls(urls);
+    return () => {
+      urls.forEach((url) => {
+        try { URL.revokeObjectURL(url); } catch {}
+      });
+    };
+  }, [selectedFiles]);
+
+  const removeSelectedFile = (index: number) => {
+    setSelectedFiles((prev) => prev.filter((_, i) => i !== index));
   };
+
+  const clearAllSelected = () => {
+    setSelectedFiles([]);
+  };
+
+  
   const handleFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
     const files = event.target.files;
     if (!files) return;
@@ -146,60 +132,25 @@ function App() {
         ? '/generate-video-pro-reels'
         : '/generate-video-reels';
       const url = `${apiBase}${endpoint}`;
-      
-      const response = await fetch(url, { method: 'POST', body: formData });
-      const contentType = response.headers.get('content-type') || '';
 
-      if (!response.ok) {
-        try {
-          if (contentType.includes('application/json')) {
-            const errorJson = await response.json();
-            throw new Error(errorJson.error || 'Failed to generate video');
-          }
-          const errorText = await response.text();
-          throw new Error(errorText || 'Failed to generate video');
-        } catch (e) {
-          throw new Error(e instanceof Error ? e.message : 'Failed to generate video');
-        }
+      const resp = await useMultiPartFormData(formData, MULTIPART_ACTIONS.SendImageTimeline, url) as TimelineStageResponse | FinalVideoResponse;
+      if (!resp.ok) {
+        throw new Error(resp.error || 'Failed to submit images');
       }
 
-      let videoObjectUrl: string | undefined;
-      if (contentType.includes('video/')) {
-        const blob = await response.blob();
-        videoObjectUrl = URL.createObjectURL(blob);
-      } else if (contentType.includes('application/json')) {
-        const result = await response.json();
-        if (result && result.videoUrl) {
-          videoObjectUrl = result.videoUrl;
-        } else if (result && result.dataUrl) {
-          videoObjectUrl = result.dataUrl;
-        } else {
-          throw new Error('Unexpected response: no video found');
-        }
+      if ('timeline' in resp && resp.timeline && Array.isArray(resp.timeline) && resp.timeline.length > 0) {
+        setTimelineSegments(resp.timeline);
+        setPendingApproval(true);
+
+        const assistantMessage: Message = {
+          id: (Date.now() + 1).toString(),
+          type: 'assistant',
+          content: 'Please review the generated timeline below. Approve to start video rendering.',
+          timestamp: new Date(),
+        };
+        setMessages(prev => [...prev, assistantMessage]);
       } else {
-        const blob = await response.blob();
-        videoObjectUrl = URL.createObjectURL(blob);
-      }
-
-      const previousVideoUrl = messages.length > 0 ? messages[messages.length - 1].videoUrl : undefined;
-
-      const assistantMessage: Message = {
-        id: (Date.now() + 1).toString(),
-        type: 'assistant',
-        content: 'Your property video has been generated! Share it across your marketing channels to attract potential buyers.',
-        timestamp: new Date(),
-        videoUrl: videoObjectUrl,
-        socialLinks: {
-          instagram: `https://www.instagram.com/create/story/`,
-          tiktok: `https://www.tiktok.com/upload/`,
-          twitter: `https://twitter.com/compose/tweet`,
-          facebook: `https://www.facebook.com/`,
-        },
-      };
-      setMessages(prev => [...prev, assistantMessage]);
-
-      if (previousVideoUrl && previousVideoUrl.startsWith('blob:')) {
-        try { URL.revokeObjectURL(previousVideoUrl); } catch {}
+        throw new Error('Unexpected server response. No timeline or SSE URL provided.');
       }
     } catch (error) {
       toast.error(error instanceof Error ? error.message : 'Failed to generate video');
@@ -213,11 +164,7 @@ function App() {
       setMessages(prev => [...prev, errorMessage]);
     } finally {
       setIsLoading(false);
-      setInputText('');
-      setSelectedFiles([]);
-      adjustHeight(true);
-      if (fileInputRef.current) fileInputRef.current.value = '';
-      if (cameraInputRef.current) cameraInputRef.current.value = '';
+      // Keep inputs so the user can adjust timeline first; clear on completion
     }
   };
 
@@ -232,37 +179,11 @@ function App() {
         
         {/* Professional Video Display */}
         <div className="relative mb-4">
-          <div className={cn(
-            "bg-gray-900 rounded-2xl p-4 shadow-2xl",
-            isMobile ? "w-full max-w-sm" : "w-full max-w-4xl"
-          )}>
-            <div className={cn(
-              "bg-black rounded-xl relative overflow-hidden",
-              isMobile ? "aspect-[9/16] max-h-[600px]" : "aspect-video h-[400px]"
-            )}>
-              {/* Video Display Area */}
-              <div className="w-full h-full flex items-center justify-center bg-gray-900">
-                {messages.length > 0 && messages[messages.length - 1].videoUrl ? (
-                  <video 
-                    src={messages[messages.length - 1].videoUrl} 
-                    controls 
-                    className="w-full h-full object-cover rounded-xl"
-                    autoPlay
-                    muted
-                    loop
-                  />
-                ) : (
-                  <div className="text-center text-gray-400 p-8">
-                    {isMobile ? <Smartphone className="w-16 h-16 mx-auto mb-4 opacity-50" /> : <Monitor className="w-16 h-16 mx-auto mb-4 opacity-50" />}
-                    <p className="text-sm">Your AI-generated property video will appear here</p>
-                    <p className="text-xs mt-2 opacity-75">
-                      Optimized for {isMobile ? "mobile viewing" : "desktop presentation"}
-                    </p>
-                  </div>
-                )}
-              </div>
-            </div>
-          </div>
+          <VideoContainer
+            timelineSegments={timelineSegments}
+            videoUrl={messages.length > 0 ? messages[messages.length - 1].videoUrl : null}
+            isMobile={isMobile}
+          />
         </div>
 
         {/* AI Prompt Interface */}
@@ -281,24 +202,41 @@ function App() {
             </div>
             <div className="relative">
               <div className="relative flex flex-col">
-                <div className="overflow-y-auto" style={{ maxHeight: "400px" }}>
+                <div>
                   {selectedFiles.length > 0 && (
-                    <div className="mx-4 mb-3 p-2 bg-blue-50 dark:bg-blue-900/20 rounded-lg flex items-center justify-between">
-                      <div className="flex items-center space-x-2">
-                        <div className="w-4 h-4 text-blue-500">📷</div>
-                        <span className="text-sm text-blue-700 dark:text-blue-300 truncate">
-                          {selectedFiles.length === 1 ? selectedFiles[0].name : `${selectedFiles.length} property photos selected`}
+                    <div className="mx-4 mb-3">
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="text-xs text-black/70 dark:text-white/70">
+                          {selectedFiles.length} photo{selectedFiles.length > 1 ? 's' : ''} selected
                         </span>
+                        <button
+                          onClick={clearAllSelected}
+                          className="text-xs text-blue-600 hover:underline"
+                        >
+                          Clear all
+                        </button>
                       </div>
-                      <button 
-                        onClick={() => setSelectedFiles([])}
-                        className="text-blue-400 hover:text-blue-600"
-                      >
-                        ×
-                      </button>
+                      <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-2">
+                        {previewUrls.map((url, idx) => (
+                          <div key={url} className="relative rounded-lg overflow-hidden bg-black/5 dark:bg-white/5 aspect-square">
+                            <img
+                              src={url}
+                              alt={selectedFiles[idx]?.name || `Selected image ${idx + 1}`}
+                              className="w-full h-full object-cover"
+                            />
+                            <button
+                              onClick={() => removeSelectedFile(idx)}
+                              className="absolute top-1 right-1 bg-black/60 text-white rounded-full w-6 h-6 flex items-center justify-center text-xs hover:bg-black/80"
+                              aria-label={`Remove ${selectedFiles[idx]?.name || `image ${idx + 1}`}`}
+                            >
+                              ×
+                            </button>
+                          </div>
+                        ))}
+                      </div>
                     </div>
                   )}
-                  
+
                   <Textarea
                     value={inputText}
                     placeholder="Create a virtual tour for this luxury home..."
@@ -363,34 +301,8 @@ function App() {
                     
                     <div className="flex items-center gap-2">
                       {!isLoading ? (
-                        <DropdownMenu>
-                          <DropdownMenuTrigger asChild>
+                          <div className="flex items-center gap-2">
                             <Button
-                              variant="ghost"
-                              className={cn(
-                                "rounded-lg p-2 bg-black/5 dark:bg-white/5",
-                                "hover:bg-black/10 dark:hover:bg-white/10 focus-visible:ring-1 focus-visible:ring-offset-0 focus-visible:ring-blue-500"
-                              )}
-                              disabled={!inputText.trim() || selectedFiles.length === 0}
-                            >
-                              <ArrowRight
-                                className={cn(
-                                  "w-4 h-4 dark:text-white transition-opacity duration-200",
-                                  (inputText.trim() && selectedFiles.length > 0)
-                                    ? "opacity-100"
-                                    : "opacity-30"
-                                )}
-                              />
-                            </Button>
-                          </DropdownMenuTrigger>
-                          <DropdownMenuContent
-                            className={cn(
-                              "min-w-[12rem]",
-                              "border-black/10 dark:border-white/10",
-                              "bg-gradient-to-b from-white via-white to-neutral-100 dark:from-neutral-950 dark:via-neutral-900 dark:to-neutral-800"
-                            )}
-                          >
-                            <DropdownMenuItem
                               onSelect={() => handleSubmit('ffmpeg')}
                               className="flex items-center justify-between gap-2"
                             >
@@ -398,8 +310,8 @@ function App() {
                                 <div className="w-4 h-4 bg-green-500 rounded-full"></div>
                                 <span>FFMPEG (Free)</span>
                               </div>
-                            </DropdownMenuItem>
-                            <DropdownMenuItem
+                            </Button>
+                            <Button
                               onSelect={() => handleSubmit('veo3')}
                               className="flex items-center justify-between gap-2"
                             >
@@ -407,9 +319,8 @@ function App() {
                                 <div className="w-4 h-4 bg-blue-500 rounded-full"></div>
                                 <span>Google Veo3 (Pro)</span>
                               </div>
-                            </DropdownMenuItem>
-                          </DropdownMenuContent>
-                        </DropdownMenu>
+                            </Button>
+                          </div>
                       ) : (
                         <div className="rounded-lg p-2 bg-black/5 dark:bg-white/5">
                           <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-500"></div>
@@ -434,51 +345,10 @@ function App() {
         
         {/* Social Media Links - Show after video generation */}
         {messages.length > 0 && messages[messages.length - 1].videoUrl && (
-          <div className="w-full max-w-2xl bg-white/95 backdrop-blur-sm rounded-2xl shadow-2xl p-4">
-            <div className="text-center mb-4">
-              <h3 className="text-lg font-semibold text-gray-800 mb-2">Share Your Property Video</h3>
-              <p className="text-sm text-gray-600">Download locally or share directly to social media</p>
-            </div>
-            
-            {/* Download Button */}
-            <div className="flex justify-center mb-4">
-              <Button
-                onClick={downloadVideo}
-                className="flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white px-6 py-2 rounded-lg font-medium transition-colors"
-              >
-                <Download className="w-4 h-4" />
-                Download Video
-              </Button>
-            </div>
-            
-            {/* Social Media Icons */}
-            <div className="flex justify-center gap-4">
-              <a href="https://www.instagram.com/create/story/" target="_blank" rel="noopener noreferrer" 
-                 className="p-3 bg-white rounded-xl hover:scale-105 transition-transform shadow-lg"
-                 title="Share to Instagram Stories">
-                <InstagramSVG />
-              </a>
-              <a href="https://www.tiktok.com/upload/" target="_blank" rel="noopener noreferrer"
-                 className="p-3 bg-white rounded-xl hover:scale-105 transition-transform shadow-lg"
-                 title="Upload to TikTok">
-                <TikTokSVG />
-              </a>
-              <a href="https://twitter.com/compose/tweet" target="_blank" rel="noopener noreferrer"
-                 className="p-3 bg-white rounded-xl hover:scale-105 transition-transform shadow-lg"
-                 title="Share on X (Twitter)">
-                <TwitterSVG />
-              </a>
-              <a href="https://www.facebook.com/" target="_blank" rel="noopener noreferrer"
-                 className="p-3 bg-white rounded-xl hover:scale-105 transition-transform shadow-lg"
-                 title="Share on Facebook">
-                <FacebookSVG />
-              </a>
-            </div>
-            
-            <p className="text-xs text-gray-500 text-center mt-3">
-              Click download first, then use the social media links to upload your saved video
-            </p>
-          </div>
+          <SocialSharePanel
+            videoUrl={messages[messages.length - 1].videoUrl!}
+            socialLinks={messages[messages.length - 1].socialLinks}
+          />
         )}
       </div>
     </div>

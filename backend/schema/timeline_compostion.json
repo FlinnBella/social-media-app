@@ -1,0 +1,326 @@
+{
+    "$schema": "http://json-schema.org/draft-07/schema#",
+    "$id": "https://api.yourdomain.com/schemas/video-composition.json",
+    "title": "TimelineComposition",
+    "description": "Way for the ai tool to generate a timeline, to present to the frontend",
+    "type": "object",
+    "required": [
+      "metadata",
+      "theme",
+      "timeline",
+      "music"
+    ],
+    "additionalProperties": false,
+    "properties": {
+      "metadata": {
+        "type": "object",
+        "required": [
+          "totalDuration",
+          "aspectRatio",
+          "fps",
+          "resolution"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "totalDuration": {
+            "type": "number",
+            "minimum": 8,
+            "maximum": 15,
+            "description": "Total video duration in seconds"
+          },
+          "aspectRatio": {
+            "type": "string",
+            "enum": [
+              "9:16",
+              "1:1"
+            ],
+            "description": "Video aspect ratio for different platforms; support for 16:9 and 4:5 later"
+          },
+          "fps": {
+            "type": "string",
+            "enum": [
+              "24",
+              "30"
+            ],
+            "description": "Frames per second; support for 60 later"
+          },
+          "resolution": {
+            "type": "array",
+            "minItems": 2,
+            "maxItems": 2,
+            "description": "Video resolution as [width, height] that corresponds to the selected aspect ratio. Only supported resolutions are allowed.",
+            "items": {
+                "type": "integer"
+              },
+            "oneOf": [
+              {
+                "description": "Valid 9:16 resolutions",
+                "enum": [
+                  [
+                    1080,
+                    1920
+                  ]
+                ]
+              },
+              {
+                "description": "Valid 1:1 resolutions",
+                "enum": [
+                  [
+                    1080,
+                    1080
+                  ]
+                ]
+              }
+            ]
+          }
+        }
+      },
+      "theme": {
+        "type": "object",
+        "required": [
+          "style",
+          "grading"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "style": {
+            "type": "string",
+            "enum": [
+                "professional",
+                "casual",
+                "luxury",
+                "traditional"
+            ]
+          },
+          "grading": {
+            "type": "string",
+            "enum": [
+              "warm",
+              "cool",
+              "vibrant",
+              "muted",
+              "high-contrast",
+              "soft"
+            ],
+            "description": "Color grading style to apply"
+          }
+        }
+      },
+      "timeline": {
+        "type": "object",
+        "required": [
+          "totalDuration",
+          "ImageTimeline",
+          "TextTimeline"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "totalDuration": {
+            "type": "number",
+            "minimum": 0,
+            "description": "Total duration of the timeline in seconds; must match what's in the metadata"
+          },
+          "ImageTimeline": {
+            "type": "array",
+            "items": {
+                "ImageSegments": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "required": [
+                      "ordering",
+                      "startTime",
+                      "duration"
+                    ],
+                    "additionalProperties": false,
+                    "properties": {
+                      "ordering": {
+                        "type": "number",
+                        "minimum": 0,
+                        "description": "Define the position of the image in the Image Timeline"
+                      },
+                      "startTime": {
+                        "type": "number",
+                        "minimum": 0,
+                        "description": "Start time in seconds from beginning of video"
+                      },
+                      "duration": {
+                        "type": "number",
+                        "minimum": 0.1,
+                        "maximum": 15,
+                        "description": "How long this image is displayed in seconds; all image Segements must add to the total duration in the metadata"
+                      },
+                          "Transition": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "effect": {
+                  "type": "string",
+                  "enum": [
+                    "fade",
+                    "dissolve",
+                    "slide",
+                    "zoom",
+                    "cut"
+                  ],
+                  "default": "fade"
+                },
+                "easing": {
+                  "type": "string",
+                  "enum": [
+                    "linear",
+                    "ease-in",
+                    "ease-out",
+                    "ease-in-out"
+                  ],
+                  "default": "ease-in-out"
+                }
+              }
+            }
+                    }
+                  }
+                }
+            }
+          },
+          "TextTimeline": {
+            "type": "object",
+            "description": "Timeline of the entire video; images and text are loosely coupled",
+            "required": [
+              "TextSegments",
+              "TextStyle"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "TextStyle": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "fontFamily",
+                  "textStyle"
+                ],
+                "properties": {
+                  "fontFamily": {
+                    "type": "string",
+                    "description": "Font family; will be infered from the mood decisions",
+                    "default": "Montserrat"
+                  },
+                  "textStyle": {
+                    "type": "string",
+                    "enum": [
+                      "bold",
+                      "regular",
+                      "light",
+                      "condensed"
+                    ]
+                  }
+                }
+              },
+              "TextSegments": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "text",
+                    "startTime",
+                    "duration",
+                    "position",
+                    "narrativeSource"
+                  ],
+                  "additionalProperties": false,
+                  "properties": {
+                    "text": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 100,
+                      "description": "The text content to display"
+                    },
+                    "startTime": {
+                      "type": "number",
+                      "minimum": 0,
+                      "description": "Start time in seconds from beginning of video"
+                    },
+                    "duration": {
+                      "type": "number",
+                      "minimum": 0.1,
+                      "maximum": 15,
+                      "description": "How long this text is displayed in seconds; all text Segements must add to the total duration in the metadata"
+                    },
+                    "position": {
+                      "type": "string",
+                      "enum": [
+                        "center",
+                        "center-left",
+                        "center-right"
+                      ],
+                      "description": "Where to position the text on screen"
+                    },
+                    "narrativeSource": {
+                      "type": "string",
+                      "description": "Reference to which part of narrative this text represents",
+                      "enum": [
+                        "hook",
+                        "story[0]",
+                        "story[1]",
+                        "story[2]",
+                        "story[3]",
+                        "story[4]",
+                        "story[5]",
+                        "story[6]",
+                        "story[7]",
+                        "story[8]",
+                        "cta"
+                      ],
+                      "examples": [
+                        "hook",
+                        "story[0]",
+                        "story[1]",
+                        "cta"
+                      ]
+                    }
+
+                  }
+                }
+              }
+            }
+          }
+        }
+          },
+      "music": {
+        "type": "object",
+        "required": [
+          "music"
+        ],
+        "additionalProperties": false,
+        "properties": {
+          "music": {
+            "type": "object",
+            "required": [
+              "enabled"
+            ],
+            "additionalProperties": false,
+            "properties": {
+              "enabled": {
+                "type": "boolean"
+              },
+              "genre": {
+                "type": "string",
+                "enum": [
+                  "corporate",
+                  "upbeat",
+                  "realtor",
+                  "traditional"
+                ]
+              },
+              "volume": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 1,
+                "default": 0.3
+              }
+            },
+            "description": "Background music; fade-in/out handled by ffmpeg"
+          }
+        }
+      }
+    }
+  }

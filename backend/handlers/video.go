@@ -3,9 +3,9 @@ package handlers
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"fmt"
 	"io"
-	"log"
 
 	"mime"
 	"mime/multipart"
@@ -14,15 +14,12 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"sync"
-	"time"
 
 	"social-media-ai-video/config"
 	"social-media-ai-video/models"
 	"social-media-ai-video/services"
 
 	"github.com/gin-gonic/gin"
-	"github.com/gorilla/websocket"
 	"google.golang.org/genai"
 )
 
@@ -32,64 +29,7 @@ type VideoHandler struct {
 	elevenLabs       *services.ElevenLabsService
 	backgroundMusic  *services.BackgroundMusic
 	ffmpegCompiler   *services.CompositionCompiler
-
-	// Realtor workflow WebSocket management
-	realtorSessions map[string]*RealtorSession
-	realtorMutex    sync.RWMutex
-	upgrader        websocket.Upgrader
-}
-
-// RealtorSession represents a simple realtor upload session
-type RealtorSession struct {
-	ID         string
-	Connection *websocket.Conn
-	Status     string
-	Progress   int
-	CreatedAt  time.Time
-}
-
-// Streaming analysis structures
-type PropertyPhoto struct {
-	Index    int    `json:"index"`
-	Filename string `json:"filename"`
-	Data     []byte `json:"-"` // Binary data
-	MimeType string `json:"mime_type"`
-}
-
-type PropertyData struct {
-	Address       string   `json:"address"`
-	Price         float64  `json:"price,omitempty"`
-	Bedrooms      int      `json:"bedrooms,omitempty"`
-	Bathrooms     float64  `json:"bathrooms,omitempty"`
-	SquareFootage int      `json:"square_footage,omitempty"`
-	PropertyType  string   `json:"property_type,omitempty"`
-	Features      []string `json:"features,omitempty"`
-}
-
-type ImageAnalysisTask struct {
-	SessionID string
-	Photo     PropertyPhoto
-	Index     int
-}
-
-type ImageAnalysisResult struct {
-	Index            int      `json:"index"`
-	Filename         string   `json:"filename"`
-	RoomType         string   `json:"room_type"`
-	Features         []string `json:"features"`
-	Description      string   `json:"description"`
-	LightingQuality  string   `json:"lighting_quality"`
-	CompositionScore int      `json:"composition_score"`
-	MarketingAppeal  string   `json:"marketing_appeal"`
-	Error            error    `json:"-"`
-}
-
-type ProgressUpdate struct {
-	SessionID string
-	Status    string
-	Progress  int
-	Message   string
-	Data      interface{}
+	veo              *services.VeoService
 }
 
 func NewVideoHandler(cfg *config.APIConfig) *VideoHandler {
@@ -99,11 +39,118 @@ func NewVideoHandler(cfg *config.APIConfig) *VideoHandler {
 		elevenLabs:       services.NewElevenLabsService(cfg),
 		backgroundMusic:  services.NewBackgroundMusic(cfg),
 		ffmpegCompiler:   services.NewCompositionCompiler(services.NewFFmpegCommandBuilder(), services.NewBackgroundMusic(cfg), services.NewElevenLabsService(cfg)),
-		realtorSessions:  make(map[string]*RealtorSession),
-		upgrader: websocket.Upgrader{
-			CheckOrigin: func(r *http.Request) bool { return true },
-		},
+		veo:              services.NewVeoService(cfg),
 	}
+}
+
+// ServeVeoVideo streams a base64-encoded video with HTTP Range support
+func (vh *VideoHandler) ServeVeoVideo(c *gin.Context) {
+	id := c.Param("id")
+	vi, ok := vh.veo.Get(id)
+	if !ok || vi == nil || vi.Base64 == "" {
+		c.JSON(http.StatusNotFound, gin.H{"status": "error", "error": "video not found"})
+		return
+	}
+
+	total := vh.veo.DecodedLen(vi.Base64)
+	if total <= 0 {
+		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": "invalid video data"})
+		return
+	}
+
+	ct := vi.MIMEType
+	if strings.TrimSpace(ct) == "" {
+		ct = "video/mp4"
+	}
+
+	rangeHeader := c.GetHeader("Range")
+	c.Header("Accept-Ranges", "bytes")
+	if rangeHeader == "" {
+		// Full content
+		c.Header("Content-Type", ct)
+		c.Header("Content-Length", fmt.Sprintf("%d", total))
+		c.Status(http.StatusOK)
+
+		enc := base64.NewDecoder(base64.StdEncoding, strings.NewReader(vi.Base64))
+		buf := make([]byte, 64*1024)
+		for {
+			n, err := enc.Read(buf)
+			if n > 0 {
+				if _, werr := c.Writer.Write(buf[:n]); werr != nil {
+					return
+				}
+				c.Writer.Flush()
+			}
+			if err == io.EOF {
+				break
+			}
+			if err != nil {
+				return
+			}
+		}
+		vh.veo.Delete(id)
+		return
+	}
+
+	// Single-range support: bytes=start-end
+	var start, end int64
+	start = 0
+	end = total - 1
+	if strings.HasPrefix(rangeHeader, "bytes=") {
+		r := strings.TrimPrefix(rangeHeader, "bytes=")
+		parts := strings.SplitN(r, "-", 2)
+		if len(parts) == 2 {
+			if parts[0] != "" {
+				if s, err := parseInt64(parts[0]); err == nil {
+					start = s
+				}
+			}
+			if parts[1] != "" {
+				if e, err := parseInt64(parts[1]); err == nil {
+					end = e
+				}
+			}
+		}
+	}
+	if start < 0 {
+		start = 0
+	}
+	if end >= total {
+		end = total - 1
+	}
+	if start > end || start >= total {
+		c.Header("Content-Range", fmt.Sprintf("bytes */%d", total))
+		c.Status(http.StatusRequestedRangeNotSatisfiable)
+		return
+	}
+
+	payload, actualEnd, derr := vh.veo.DecodeRange(vi.Base64, start, end)
+	if derr != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": "decode error"})
+		return
+	}
+
+	c.Status(http.StatusPartialContent)
+	c.Header("Content-Type", ct)
+	c.Header("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, actualEnd, total))
+	c.Header("Content-Length", fmt.Sprintf("%d", len(payload)))
+	_, _ = c.Writer.Write(payload)
+	if start == 0 && actualEnd == total-1 {
+		vh.veo.Delete(id)
+	}
+	return
+}
+
+func parseInt64(s string) (int64, error) {
+	var x int64
+	for i := 0; i < len(s); i++ {
+		ch := s[i]
+		if ch < '0' || ch > '9' {
+			return 0, fmt.Errorf("invalid number")
+		}
+		x = x*10 + int64(ch-'0')
+	}
+	return x, nil
 }
 
 func (vh *VideoHandler) GenerateVideoReels(c *gin.Context) {
@@ -246,14 +293,12 @@ func (vh *VideoHandler) GenerateVideoReels(c *gin.Context) {
 }
 
 func (vh *VideoHandler) GenerateProReels(c *gin.Context) {
-	// Stream inbound multipart to Google Veo and stream response back
+	// Enforce multipart/form-data only
 	ct := c.GetHeader("Content-Type")
 	if !strings.HasPrefix(ct, "multipart/form-data") {
 		c.JSON(http.StatusUnsupportedMediaType, gin.H{"status": "error", "error": "Content-Type must be multipart/form-data"})
 		return
 	}
-
-	// Do NOT call c.PostForm here; it would consume the body. We'll read prompt from parts below.
 
 	mediaType, params, err := mime.ParseMediaType(ct)
 	if err != nil || !strings.HasPrefix(mediaType, "multipart/") {
@@ -313,50 +358,48 @@ func (vh *VideoHandler) GenerateProReels(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "prompt is required"})
 		return
 	}
-	// Optional: prompt-only if no image provided
+
 	ctx := context.Background()
-	client, err := genai.NewClient(ctx, &genai.ClientConfig{
-		APIKey: vh.cfg.GoogleVeoAPIKey,
-	})
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": fmt.Sprintf("failed to initialize google veo client: %v", err)})
+	b64, mimeOut, fallbackBytes, fallbackMime, gerr := vh.veo.GenerateFirstVideoBase64(ctx, prompt, img)
+	if gerr != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": gerr.Error()})
 		return
 	}
 
-	operation, err := client.Models.GenerateVideos(ctx, "veo-3.0-generate-preview", prompt, img, nil)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": fmt.Sprintf("generate videos failed: %v", err)})
-		return
-	}
-
-	for !operation.Done {
-		log.Println("Waiting for video generation to complete...")
-		time.Sleep(10 * time.Second)
-		operation, err = client.Operations.GetVideosOperation(ctx, operation, nil)
-		if err != nil {
-			c.JSON(http.StatusBadGateway, gin.H{"status": "error", "error": fmt.Sprintf("poll operation failed: %v", err)})
-			return
+	if b64 != "" {
+		if strings.TrimSpace(mimeOut) == "" {
+			mimeOut = "video/mp4"
 		}
+		id := vh.veo.GenerateID()
+		vh.veo.Put(id, &services.VeoItem{MIMEType: mimeOut, Base64: b64})
+		c.JSON(http.StatusOK, gin.H{"ok": true, "videoUrl": fmt.Sprintf("/api/veo/video/%s", id)})
+		return
 	}
 
-	if operation.Response == nil || len(operation.Response.GeneratedVideos) == 0 || operation.Response.GeneratedVideos[0] == nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": "no video generated"})
-		return
-	}
-	v := operation.Response.GeneratedVideos[0]
-	data, err := client.Files.Download(ctx, genai.NewDownloadURIFromGeneratedVideo(v), nil)
+	// Fallback: we have bytes; write to temp file and stream via Range
+	tmpFile, err := os.CreateTemp("", "veo3-*.mp4")
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": fmt.Sprintf("download failed: %v", err)})
+		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": fmt.Sprintf("failed to create temp file: %v", err)})
 		return
 	}
-	ctOut := v.Video.MIMEType
+	defer func(name string) {
+		_ = tmpFile.Close()
+		_ = os.Remove(name)
+	}(tmpFile.Name())
+	if _, err := tmpFile.Write(fallbackBytes); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": fmt.Sprintf("failed to write temp video: %v", err)})
+		return
+	}
+	if _, err := tmpFile.Seek(0, io.SeekStart); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": fmt.Sprintf("failed to rewind temp video: %v", err)})
+		return
+	}
+	ctOut := fallbackMime
 	if ctOut == "" {
 		ctOut = "video/mp4"
 	}
-	c.Status(http.StatusOK)
 	c.Header("Content-Type", ctOut)
-	c.Header("Content-Length", fmt.Sprintf("%d", len(data)))
-	_, _ = c.Writer.Write(data)
+	c.File(tmpFile.Name())
 	return
 }
 
@@ -416,4 +459,12 @@ func (vh *VideoHandler) GenerateVideoPexels(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, resp)
+}
+
+func (vh *VideoHandler) SSEStream(c *gin.Context) {
+	c.Header("Content-Type", "text/event-stream")
+	c.Header("Cache-Control", "no-cache")
+	c.SSEvent("error", gin.H{"status": "error", "error": "SSE not implemented"})
+	c.Writer.Flush()
+	return
 }
