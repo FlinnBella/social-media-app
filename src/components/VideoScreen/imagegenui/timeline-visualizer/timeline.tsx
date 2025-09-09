@@ -1,25 +1,24 @@
-import { useState } from 'react';
-import { Button } from '@/components/ui/button';
+// no local state needed
 import { TimelineCard } from './timelinecard';
 import type { ImageSegment } from '#types/multipart';
+import { FFMpegRequestButton } from '@/components/api-request-buttons/FFMpegRequestButton';
+import { VeoRequestButton } from '@/components/api-request-buttons/VeoRequestButton';
+import { useSubmission } from '@/context/SubmissionContext';
 
-export const Timeline = ({ ImageSegments }: { ImageSegments: ImageSegment[] }) => {
-const [isLoading, setIsLoading] = useState(false);
+interface TimelineProps {
+    ImageSegments: ImageSegment[];
+    prompt?: string;
+    images?: File[];
+}
+
+export const Timeline = ({ ImageSegments, prompt, images }: TimelineProps) => {
+const { isLoading } = useSubmission();
 
 const MapImageSegments = (ImageSegments: ImageSegment[]) => {
     const sortedImageSegments = [...ImageSegments].sort((a, b) => a.ordering - b.ordering);
     return sortedImageSegments.map((segment) => {
         return <TimelineCard key={segment.id} segment={segment} />
     })
-}
-
-const GenerateVideo = async () => {
-    setIsLoading(true);
-    await fetch('/api/generate-video', {
-        method: 'POST',
-        body: new FormData()
-    });
-    setIsLoading(false);
 }
 
     return(
@@ -29,8 +28,23 @@ const GenerateVideo = async () => {
 
             <div> {MapImageSegments(ImageSegments)} </div>
 
-            <div> <p> If everything looks good, click the button to generate your video!</p>
-            <div> <Button onClick={GenerateVideo}>Generate Video</Button> </div> </div>
+            <div>
+                <p> If everything looks good, click a button to generate your video!</p>
+                <div className="flex items-center gap-2">
+                    <FFMpegRequestButton 
+                        prompt={prompt || ''}
+                        images={images || []}
+                        disabled={isLoading}
+                        className=""
+                    />
+                    <VeoRequestButton 
+                        prompt={prompt || ''}
+                        images={images || []}
+                        disabled={isLoading}
+                        className=""
+                    />
+                </div>
+            </div>
             </div>
             {isLoading && <div>Loading...</div>}
 

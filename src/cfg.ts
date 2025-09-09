@@ -6,6 +6,7 @@ export const API_ENDPOINTS = {
     generateVideoPexels: '/api/generate-video-pexels',
     generateVideoReels: '/api/generate-video-reels',
     generateVideoProReels: '/api/generate-video-pro-reels',
+    generateVideoTimeline: '/api/generate-video-timeline',
 } as const;
 
 export type ApiEndpointKey = keyof typeof API_ENDPOINTS;

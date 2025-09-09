@@ -3,14 +3,19 @@ import { Monitor, Smartphone } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import type { ImageSegment } from '#types/multipart';
 import { Timeline } from '@/components/VideoScreen/imagegenui/timeline-visualizer/timeline';
+// removed unused types
 
 interface VideoContainerProps {
     timelineSegments: ImageSegment[] | null;
     videoUrl?: string | null;
     isMobile: boolean;
+    prompt?: string;
+    images?: File[];
 }
 
-export const VideoContainer: React.FC<VideoContainerProps> = ({ timelineSegments, videoUrl, isMobile }) => {
+export const VideoContainer: React.FC<VideoContainerProps> = ({ timelineSegments, videoUrl, isMobile, prompt, images }) => {
+    //shoudl be binary being streamed to the client; 
+    //need to convert it to a blob url for the src to render
     return (
         <div className={cn(
             "bg-gray-900 rounded-2xl p-4 shadow-2xl",
@@ -22,7 +27,11 @@ export const VideoContainer: React.FC<VideoContainerProps> = ({ timelineSegments
             )}>
                 <div className="w-full h-full flex items-center justify-center bg-gray-900">
                     {timelineSegments ? (
-                        <Timeline ImageSegments={timelineSegments} />
+                        <Timeline 
+                            ImageSegments={timelineSegments}
+                            prompt={prompt}
+                            images={images}
+                        />
                     ) : videoUrl ? (
                         <video
                             src={videoUrl}

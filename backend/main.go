@@ -63,7 +63,7 @@ func main() {
 		api.POST("/generate-video-pexels", videoHandler.GenerateVideoPexels)
 		api.POST("/generate-video-reels", videoHandler.GenerateVideoReels)
 		api.POST("/generate-video-pro-reels", videoHandler.GenerateProReels)
-		api.GET("/veo/video/:id", videoHandler.ServeVeoVideo)
+		api.POST("/generate-video-timeline", videoHandler.GenerateVideoTimeline)
 		//add requireAPIKey middleware later
 		//api.GET("/composition", videoHandler.GetComposition)
 		api.GET("/sse", videoHandler.SSEStream)

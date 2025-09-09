@@ -2,13 +2,10 @@ package handlers
 
 import (
 	"bytes"
-	"context"
-	"encoding/base64"
 	"fmt"
 	"io"
 
 	"mime"
-	"mime/multipart"
 	"net/http"
 	"os"
 	"os/exec"
@@ -20,15 +17,16 @@ import (
 	"social-media-ai-video/services"
 
 	"github.com/gin-gonic/gin"
-	"google.golang.org/genai"
 )
 
+// these are all tools the function can tap into
 type VideoHandler struct {
 	cfg              *config.APIConfig
 	contentGenerator *services.ContentGenerator
 	elevenLabs       *services.ElevenLabsService
 	backgroundMusic  *services.BackgroundMusic
 	ffmpegCompiler   *services.CompositionCompiler
+	N8NService       *services.N8NService
 	veo              *services.VeoService
 }
 
@@ -39,108 +37,14 @@ func NewVideoHandler(cfg *config.APIConfig) *VideoHandler {
 		elevenLabs:       services.NewElevenLabsService(cfg),
 		backgroundMusic:  services.NewBackgroundMusic(cfg),
 		ffmpegCompiler:   services.NewCompositionCompiler(services.NewFFmpegCommandBuilder(), services.NewBackgroundMusic(cfg), services.NewElevenLabsService(cfg)),
+		N8NService:       services.NewN8NService(cfg),
 		veo:              services.NewVeoService(cfg),
 	}
 }
 
-// ServeVeoVideo streams a base64-encoded video with HTTP Range support
-func (vh *VideoHandler) ServeVeoVideo(c *gin.Context) {
-	id := c.Param("id")
-	vi, ok := vh.veo.Get(id)
-	if !ok || vi == nil || vi.Base64 == "" {
-		c.JSON(http.StatusNotFound, gin.H{"status": "error", "error": "video not found"})
-		return
-	}
-
-	total := vh.veo.DecodedLen(vi.Base64)
-	if total <= 0 {
-		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": "invalid video data"})
-		return
-	}
-
-	ct := vi.MIMEType
-	if strings.TrimSpace(ct) == "" {
-		ct = "video/mp4"
-	}
-
-	rangeHeader := c.GetHeader("Range")
-	c.Header("Accept-Ranges", "bytes")
-	if rangeHeader == "" {
-		// Full content
-		c.Header("Content-Type", ct)
-		c.Header("Content-Length", fmt.Sprintf("%d", total))
-		c.Status(http.StatusOK)
-
-		enc := base64.NewDecoder(base64.StdEncoding, strings.NewReader(vi.Base64))
-		buf := make([]byte, 64*1024)
-		for {
-			n, err := enc.Read(buf)
-			if n > 0 {
-				if _, werr := c.Writer.Write(buf[:n]); werr != nil {
-					return
-				}
-				c.Writer.Flush()
-			}
-			if err == io.EOF {
-				break
-			}
-			if err != nil {
-				return
-			}
-		}
-		vh.veo.Delete(id)
-		return
-	}
-
-	// Single-range support: bytes=start-end
-	var start, end int64
-	start = 0
-	end = total - 1
-	if strings.HasPrefix(rangeHeader, "bytes=") {
-		r := strings.TrimPrefix(rangeHeader, "bytes=")
-		parts := strings.SplitN(r, "-", 2)
-		if len(parts) == 2 {
-			if parts[0] != "" {
-				if s, err := parseInt64(parts[0]); err == nil {
-					start = s
-				}
-			}
-			if parts[1] != "" {
-				if e, err := parseInt64(parts[1]); err == nil {
-					end = e
-				}
-			}
-		}
-	}
-	if start < 0 {
-		start = 0
-	}
-	if end >= total {
-		end = total - 1
-	}
-	if start > end || start >= total {
-		c.Header("Content-Range", fmt.Sprintf("bytes */%d", total))
-		c.Status(http.StatusRequestedRangeNotSatisfiable)
-		return
-	}
-
-	payload, actualEnd, derr := vh.veo.DecodeRange(vi.Base64, start, end)
-	if derr != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": "decode error"})
-		return
-	}
-
-	c.Status(http.StatusPartialContent)
-	c.Header("Content-Type", ct)
-	c.Header("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, actualEnd, total))
-	c.Header("Content-Length", fmt.Sprintf("%d", len(payload)))
-	_, _ = c.Writer.Write(payload)
-	if start == 0 && actualEnd == total-1 {
-		vh.veo.Delete(id)
-	}
-	return
-}
-
+/*
+Some tool to parse a string into an int64(???)
+*/
 func parseInt64(s string) (int64, error) {
 	var x int64
 	for i := 0; i < len(s); i++ {
@@ -153,6 +57,90 @@ func parseInt64(s string) (int64, error) {
 	return x, nil
 }
 
+/*
+GenerateVideoTimeline is function to generate a video timeline, so they can
+somewhat visualize what the video will look like in the final composition
+
+Wrapper around the N8N Service which directs the data to the correct
+N8N endpoint
+*/
+
+func (vh *VideoHandler) GenerateVideoTimeline(c *gin.Context) {
+	//GUARDS for multipart/form-data
+	ct := c.GetHeader("Content-Type")
+	if !strings.HasPrefix(ct, "multipart/form-data") {
+		c.JSON(http.StatusUnsupportedMediaType, gin.H{"status": "error", "error": "Content-Type must be multipart/form-data"})
+		return
+	}
+	// GUARDS END
+
+	targetURL := vh.cfg.N8BTIMELINEURL
+	resp, err := vh.N8NService.Get(c, targetURL)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": fmt.Sprintf("failed to get timeline: %v", err)})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"status": "success", "data": resp.Body})
+	defer resp.Body.Close()
+
+}
+
+/*
+this tool will be an api endpoint, and will be called to actually generate a video for the client
+should take in a modified prompt, from the timeline schema
+make a seprate api request, but pass modified data to it
+*/
+
+/*
+This method has been completely FUCKED by Cursor AI; need to fix it
+*/
+func (vh *VideoHandler) GenerateProReels(c *gin.Context) {
+	// Enforce multipart/form-data only
+	//GUARDS
+	ct := c.GetHeader("Content-Type")
+	if !strings.HasPrefix(ct, "multipart/form-data") {
+		c.JSON(http.StatusUnsupportedMediaType, gin.H{"status": "error", "error": "Content-Type must be multipart/form-data"})
+		return
+	}
+
+	mediaType, params, err := mime.ParseMediaType(ct)
+	if err != nil || !strings.HasPrefix(mediaType, "multipart/") {
+		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "invalid multipart content-type"})
+		return
+	}
+	boundary := params["boundary"]
+	if boundary == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "missing multipart boundary"})
+		return
+	}
+	// GUARDS END
+
+	/*
+		Everything below here is going to just be put in the veo function handler
+		returns name and bytes, which we c.DataFromReader straight to the client as bytes
+	*/
+	mp4_name, video_bytes := vh.veo.GenerateVideoMultipart(c, boundary)
+
+	//content disposition mapping
+	ContentDisposition := map[string]string{"Content-Disposition": fmt.Sprintf("attachment; filename=\"%s\"", mp4_name)}
+
+	c.DataFromReader(http.StatusOK, int64(len(video_bytes)), "video/mp4", bytes.NewReader(video_bytes), ContentDisposition)
+}
+
+/*
+SSEStream to send small, event based updates to the client
+*/
+func (vh *VideoHandler) SSEStream(c *gin.Context) {
+	c.Header("Content-Type", "text/event-stream")
+	c.Header("Cache-Control", "no-cache")
+	c.SSEvent("error", gin.H{"status": "error", "error": "SSE not implemented"})
+	c.Writer.Flush()
+	return
+}
+
+/*
+FFMPEG implementation; not as good as the google veo for sure
+*/
 func (vh *VideoHandler) GenerateVideoReels(c *gin.Context) {
 	// Enforce multipart/form-data only
 	ct := c.GetHeader("Content-Type")
@@ -292,116 +280,9 @@ func (vh *VideoHandler) GenerateVideoReels(c *gin.Context) {
 
 }
 
-func (vh *VideoHandler) GenerateProReels(c *gin.Context) {
-	// Enforce multipart/form-data only
-	ct := c.GetHeader("Content-Type")
-	if !strings.HasPrefix(ct, "multipart/form-data") {
-		c.JSON(http.StatusUnsupportedMediaType, gin.H{"status": "error", "error": "Content-Type must be multipart/form-data"})
-		return
-	}
-
-	mediaType, params, err := mime.ParseMediaType(ct)
-	if err != nil || !strings.HasPrefix(mediaType, "multipart/") {
-		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "invalid multipart content-type"})
-		return
-	}
-	boundary := params["boundary"]
-	if boundary == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "missing multipart boundary"})
-		return
-	}
-	// Reader over incoming multipart body
-	mr := multipart.NewReader(c.Request.Body, boundary)
-
-	// Read prompt and the first image part into memory (SDK requires []byte). Limit image size to 25MB.
-	var img *genai.Image
-	prompt := ""
-	for {
-		part, err := mr.NextPart()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": fmt.Sprintf("read part error: %v", err)})
-			return
-		}
-		if part.FileName() != "" && part.FormName() == "image" {
-			lr := io.LimitReader(part, 25<<20)
-			b, rerr := io.ReadAll(lr)
-			part.Close()
-			if rerr != nil {
-				c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": fmt.Sprintf("read image error: %v", rerr)})
-				return
-			}
-			mimeType := part.Header.Get("Content-Type")
-			if mimeType == "" {
-				mimeType = mime.TypeByExtension(filepath.Ext(part.FileName()))
-				if mimeType == "" {
-					mimeType = "image/jpeg"
-				}
-			}
-			img = &genai.Image{ImageBytes: b, MIMEType: mimeType}
-			// do not break; continue scanning parts to also capture prompt
-		} else if part.FileName() == "" && part.FormName() == "prompt" {
-			b, rerr := io.ReadAll(part)
-			part.Close()
-			if rerr != nil {
-				c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": fmt.Sprintf("read prompt error: %v", rerr)})
-				return
-			}
-			prompt = string(b)
-		}
-		part.Close()
-	}
-
-	if strings.TrimSpace(prompt) == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "prompt is required"})
-		return
-	}
-
-	ctx := context.Background()
-	b64, mimeOut, fallbackBytes, fallbackMime, gerr := vh.veo.GenerateFirstVideoBase64(ctx, prompt, img)
-	if gerr != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": gerr.Error()})
-		return
-	}
-
-	if b64 != "" {
-		if strings.TrimSpace(mimeOut) == "" {
-			mimeOut = "video/mp4"
-		}
-		id := vh.veo.GenerateID()
-		vh.veo.Put(id, &services.VeoItem{MIMEType: mimeOut, Base64: b64})
-		c.JSON(http.StatusOK, gin.H{"ok": true, "videoUrl": fmt.Sprintf("/api/veo/video/%s", id)})
-		return
-	}
-
-	// Fallback: we have bytes; write to temp file and stream via Range
-	tmpFile, err := os.CreateTemp("", "veo3-*.mp4")
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": fmt.Sprintf("failed to create temp file: %v", err)})
-		return
-	}
-	defer func(name string) {
-		_ = tmpFile.Close()
-		_ = os.Remove(name)
-	}(tmpFile.Name())
-	if _, err := tmpFile.Write(fallbackBytes); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": fmt.Sprintf("failed to write temp video: %v", err)})
-		return
-	}
-	if _, err := tmpFile.Seek(0, io.SeekStart); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": fmt.Sprintf("failed to rewind temp video: %v", err)})
-		return
-	}
-	ctOut := fallbackMime
-	if ctOut == "" {
-		ctOut = "video/mp4"
-	}
-	c.Header("Content-Type", ctOut)
-	c.File(tmpFile.Name())
-	return
-}
+/*
+Previous implementation
+*/
 
 // this function is currently broken; fix later
 func (vh *VideoHandler) GenerateVideoPexels(c *gin.Context) {
@@ -459,12 +340,4 @@ func (vh *VideoHandler) GenerateVideoPexels(c *gin.Context) {
 	}
 
 	c.JSON(http.StatusOK, resp)
-}
-
-func (vh *VideoHandler) SSEStream(c *gin.Context) {
-	c.Header("Content-Type", "text/event-stream")
-	c.Header("Cache-Control", "no-cache")
-	c.SSEvent("error", gin.H{"status": "error", "error": "SSE not implemented"})
-	c.Writer.Flush()
-	return
 }

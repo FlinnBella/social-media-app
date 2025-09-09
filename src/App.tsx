@@ -1,51 +1,36 @@
-import { useState, useRef, useEffect } from 'react';
-import { toast } from 'sonner';
-import { Upload, Camera } from 'lucide-react';
-import { Textarea } from '@/components/ui/textarea';
-import { cn } from '@/lib/utils';
-import { useAutoResizeTextarea } from '@/hooks/use-auto-resize-textarea';
-import { Button } from '@/components/ui/button';
-import {
-    DropdownMenu,
-    DropdownMenuContent,
-    DropdownMenuItem,
-    DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu';
- 
-import SocialSharePanel from '@/components/SocialSharePanel';
-import { useMultiPartFormData, MULTIPART_ACTIONS } from '@/hooks/useMultiPartFormData';
-import type { TimelineStageResponse, FinalVideoResponse, ImageSegment } from '#types/multipart';
-import VideoContainer from '@/components/VideoScreen/VideoContainer';
+import { useState, useRef, useEffect } from "react";
+import { toast } from "sonner";
+import { Upload, Camera } from "lucide-react";
+import { Textarea } from "@/components/ui/textarea";
+import { cn } from "@/lib/utils";
+import { useAutoResizeTextarea } from "@/hooks/use-auto-resize-textarea";
+// removed unused Button import
+// removed unused dropdown menu imports
 
-interface Message {
-  id: string;
-  type: 'user' | 'assistant';
-  content: string;
-  timestamp: Date;
-  videoUrl?: string;
-  socialLinks?: {
-    instagram: string;
-    tiktok: string;
-    twitter: string;
-    facebook: string;
-  };
-}
+import SocialSharePanel from "@/components/SocialSharePanel";
+// types imported where needed
+import VideoContainer from "@/components/VideoScreen/VideoContainer";
+import { FFMpegRequestButton } from "@/components/api-request-buttons/FFMpegRequestButton";
+import { VeoRequestButton } from "@/components/api-request-buttons/VeoRequestButton";
+import { useSubmission } from "@/context/SubmissionContext";
+import { GenerateTimelineButton } from "@/components/api-request-buttons/GenerateTimelineButton";
 
+// Message type handled via SubmissionContext
 
 function App() {
-  const [messages, setMessages] = useState<Message[]>([]);
-  const [inputText, setInputText] = useState('');
+  const { isLoading, messages, timelineSegments } = useSubmission();
+  const [inputText, setInputText] = useState("");
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
-  const [isLoading, setIsLoading] = useState(false);
   const [isMobile, setIsMobile] = useState(false);
   const [previewUrls, setPreviewUrls] = useState<string[]>([]);
-  const [timelineSegments, setTimelineSegments] = useState<ImageSegment[] | null>(null);
-  const [pendingApproval, setPendingApproval] = useState(false);
-  
+  // removed unused pendingApproval state
+
+  const [hasSubmittedTimeline, setHasSubmittedTimeline] = useState(false);
+
   const fileInputRef = useRef<HTMLInputElement>(null);
   const cameraInputRef = useRef<HTMLInputElement>(null);
   const previewUrlsRef = useRef<string[]>([]);
-  
+
   const { textareaRef, adjustHeight } = useAutoResizeTextarea({
     minHeight: 72,
     maxHeight: 300,
@@ -55,23 +40,27 @@ function App() {
     const checkMobile = () => {
       setIsMobile(window.innerWidth < 768);
     };
-    
+
     checkMobile();
-    window.addEventListener('resize', checkMobile);
-    return () => window.removeEventListener('resize', checkMobile);
+    window.addEventListener("resize", checkMobile);
+    return () => window.removeEventListener("resize", checkMobile);
   }, []);
 
   useEffect(() => {
     // Revoke previously created URLs before creating new ones
     previewUrlsRef.current.forEach((url) => {
-      try { URL.revokeObjectURL(url); } catch {}
+      try {
+        URL.revokeObjectURL(url);
+      } catch {}
     });
     const urls = selectedFiles.map((file) => URL.createObjectURL(file));
     previewUrlsRef.current = urls;
     setPreviewUrls(urls);
     return () => {
       urls.forEach((url) => {
-        try { URL.revokeObjectURL(url); } catch {}
+        try {
+          URL.revokeObjectURL(url);
+        } catch {}
       });
     };
   }, [selectedFiles]);
@@ -84,13 +73,14 @@ function App() {
     setSelectedFiles([]);
   };
 
-  
   const handleFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
     const files = event.target.files;
     if (!files) return;
-    const imageFiles = Array.from(files).filter((f) => f.type.startsWith('image/'));
+    const imageFiles = Array.from(files).filter((f) =>
+      f.type.startsWith("image/")
+    );
     if (imageFiles.length === 0) {
-      toast.error('Please select image files');
+      toast.error("Please select image files");
       return;
     }
     setSelectedFiles((prev) => [...prev, ...imageFiles]);
@@ -103,68 +93,7 @@ function App() {
     }
   };
 
-  const handleSubmit = async (apiType: 'ffmpeg' | 'veo3') => {
-    if (!inputText.trim() || selectedFiles.length === 0) {
-      return toast.error('Please enter a property description and upload photos');
-    }
-
-    const userMessage: Message = {
-      id: Date.now().toString(),
-      type: 'user',
-      content: inputText || 'Uploaded property photos',
-      timestamp: new Date(),
-    };
-
-    setMessages(prev => [...prev, userMessage]);
-    setIsLoading(true);
-
-    try {
-      const formData = new FormData();
-      formData.append('prompt', inputText);
-      for (const file of selectedFiles) {
-        formData.append('image', file, file.name);
-      }
-
-      const apiBase = import.meta.env.PROD ? '/api' : 'http://localhost:8080/api';
-      const endpoint = apiType === 'veo3'
-        ? '/generate-video-pro-reels'
-        : '/generate-video-reels';
-      const url = `${apiBase}${endpoint}`;
-
-      const resp = await useMultiPartFormData(formData, MULTIPART_ACTIONS.SendImageTimeline, url) as TimelineStageResponse | FinalVideoResponse;
-      if (!resp.ok) {
-        throw new Error(resp.error || 'Failed to submit images');
-      }
-
-      if ('timeline' in resp && resp.timeline && Array.isArray(resp.timeline) && resp.timeline.length > 0) {
-        setTimelineSegments(resp.timeline);
-        setPendingApproval(true);
-
-        const assistantMessage: Message = {
-          id: (Date.now() + 1).toString(),
-          type: 'assistant',
-          content: 'Please review the generated timeline below. Approve to start video rendering.',
-          timestamp: new Date(),
-        };
-        setMessages(prev => [...prev, assistantMessage]);
-      } else {
-        throw new Error('Unexpected server response. No timeline or SSE URL provided.');
-      }
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : 'Failed to generate video');
-      console.error(error);
-      const errorMessage: Message = {
-        id: (Date.now() + 1).toString(),
-        type: 'assistant',
-        content: `Sorry, there was an error generating your property video: ${error instanceof Error ? error.message : 'Unknown error'}`,
-        timestamp: new Date(),
-      };
-      setMessages(prev => [...prev, errorMessage]);
-    } finally {
-      setIsLoading(false);
-      // Keep inputs so the user can adjust timeline first; clear on completion
-    }
-  };
+  // submission handlers moved to SubmissionContext
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-blue-100 to-white flex flex-col items-center justify-center p-4 md:p-8">
@@ -172,15 +101,20 @@ function App() {
       <h1 className="font-ibm text-3xl md:text-4xl font-bold text-gray-800 mb-8 text-center">
         AI Real Estate Content Creator
       </h1>
-      
+
       <div className="flex flex-col items-center gap-8 w-full max-w-6xl">
-        
         {/* Professional Video Display */}
         <div className="relative mb-4">
           <VideoContainer
             timelineSegments={timelineSegments}
-            videoUrl={messages.length > 0 ? messages[messages.length - 1].videoUrl : null}
+            videoUrl={
+              messages.length > 0
+                ? messages[messages.length - 1].videoUrl
+                : null
+            }
             isMobile={isMobile}
+            prompt={inputText}
+            images={selectedFiles}
           />
         </div>
 
@@ -205,7 +139,8 @@ function App() {
                     <div className="mx-4 mb-3">
                       <div className="flex items-center justify-between mb-2">
                         <span className="text-xs text-black/70 dark:text-white/70">
-                          {selectedFiles.length} photo{selectedFiles.length > 1 ? 's' : ''} selected
+                          {selectedFiles.length} photo
+                          {selectedFiles.length > 1 ? "s" : ""} selected
                         </span>
                         <button
                           onClick={clearAllSelected}
@@ -216,16 +151,24 @@ function App() {
                       </div>
                       <div className="grid grid-cols-3 sm:grid-cols-4 md:grid-cols-5 gap-2">
                         {previewUrls.map((url, idx) => (
-                          <div key={url} className="relative rounded-lg overflow-hidden bg-black/5 dark:bg-white/5 aspect-square">
+                          <div
+                            key={url}
+                            className="relative rounded-lg overflow-hidden bg-black/5 dark:bg-white/5 aspect-square"
+                          >
                             <img
                               src={url}
-                              alt={selectedFiles[idx]?.name || `Selected image ${idx + 1}`}
+                              alt={
+                                selectedFiles[idx]?.name ||
+                                `Selected image ${idx + 1}`
+                              }
                               className="w-full h-full object-cover"
                             />
                             <button
                               onClick={() => removeSelectedFile(idx)}
                               className="absolute top-1 right-1 bg-black/60 text-white rounded-full w-6 h-6 flex items-center justify-center text-xs hover:bg-black/80"
-                              aria-label={`Remove ${selectedFiles[idx]?.name || `image ${idx + 1}`}`}
+                              aria-label={`Remove ${
+                                selectedFiles[idx]?.name || `image ${idx + 1}`
+                              }`}
                             >
                               ×
                             </button>
@@ -271,7 +214,7 @@ function App() {
                         onChange={handleFileSelect}
                         className="hidden"
                       />
-                      
+
                       <label
                         className={cn(
                           "rounded-lg p-2 bg-black/5 dark:bg-white/5 cursor-pointer",
@@ -283,7 +226,7 @@ function App() {
                       >
                         <Upload className="w-4 h-4 transition-colors" />
                       </label>
-                      
+
                       <label
                         className={cn(
                           "rounded-lg p-2 bg-black/5 dark:bg-white/5 cursor-pointer",
@@ -296,32 +239,32 @@ function App() {
                         <Camera className="w-4 h-4 transition-colors" />
                       </label>
                     </div>
-                    
+
                     <div className="flex items-center gap-2">
-                      {!isLoading ? (
+                      {hasSubmittedTimeline ? (
+                        !isLoading ? (
                           <div className="flex items-center gap-2">
-                            <Button
-                              onSelect={() => handleSubmit('ffmpeg')}
-                              className="flex items-center justify-between gap-2"
-                            >
-                              <div className="flex items-center gap-2">
-                                <div className="w-4 h-4 bg-green-500 rounded-full"></div>
-                                <span>FFMPEG (Free)</span>
-                              </div>
-                            </Button>
-                            <Button
-                              onSelect={() => handleSubmit('veo3')}
-                              className="flex items-center justify-between gap-2"
-                            >
-                              <div className="flex items-center gap-2">
-                                <div className="w-4 h-4 bg-blue-500 rounded-full"></div>
-                                <span>Google Veo3 (Pro)</span>
-                              </div>
-                            </Button>
+                            <FFMpegRequestButton
+                              prompt={inputText}
+                              images={selectedFiles}
+                            />
+                            <VeoRequestButton
+                              prompt={inputText}
+                              images={selectedFiles}
+                            />
                           </div>
+                        ) : (
+                          <div className="rounded-lg p-2 bg-black/5 dark:bg-white/5">
+                            <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-500"></div>
+                          </div>
+                        )
                       ) : (
-                        <div className="rounded-lg p-2 bg-black/5 dark:bg-white/5">
-                          <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-500"></div>
+                        <div className="flex items-center gap-2">
+                          <GenerateTimelineButton
+                            prompt={inputText}
+                            images={selectedFiles}
+                            setHasSubmittedTimeline={setHasSubmittedTimeline}
+                          />
                         </div>
                       )}
                     </div>
@@ -330,17 +273,19 @@ function App() {
               </div>
             </div>
           </div>
-          
+
           {isLoading && (
             <div className="mt-3 p-3 bg-blue-50 dark:bg-blue-900/20 rounded-lg">
               <div className="flex items-center space-x-2">
                 <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-500"></div>
-                <p className="text-sm text-blue-700 dark:text-blue-300 font-ibm">Generating your property video...</p>
+                <p className="text-sm text-blue-700 dark:text-blue-300 font-ibm">
+                  Generating your property video...
+                </p>
               </div>
             </div>
           )}
         </div>
-        
+
         {/* Social Media Links - Show after video generation */}
         {messages.length > 0 && messages[messages.length - 1].videoUrl && (
           <SocialSharePanel

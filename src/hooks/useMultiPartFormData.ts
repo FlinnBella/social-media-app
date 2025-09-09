@@ -1,5 +1,6 @@
 import { toast } from "sonner";
-import type { TimelineStageResponse, FinalVideoResponse, MultiPartAction } from "#types/multipart";
+import type {  FinalVideoResponse, MultiPartAction } from "#types/multipart";
+import type { TimelineCompositionResponse } from "#types/timeline";
 
 export const MULTIPART_ACTIONS = {
     SendImageTimeline: 'SendImageTimeline',
@@ -11,7 +12,7 @@ export type MultiPartActionsMap = typeof MULTIPART_ACTIONS;
 
 // take in the actual formdata, what action is occuring
 // then perform that keeping the server url in mind
-export const useMultiPartFormData = async (formData: any, currentAction: MultiPartAction, serverUrl: string): Promise<TimelineStageResponse | FinalVideoResponse> => {
+export const useMultiPartFormData = async (formData: any, currentAction: MultiPartAction, serverUrl: string): Promise<TimelineCompositionResponse | Response | FinalVideoResponse | Error > => {
 
     // use this to handle all form data operations
     switch (currentAction) {
@@ -30,13 +31,13 @@ export const useMultiPartFormData = async (formData: any, currentAction: MultiPa
     // these will handle sending and receiving the form-data; 
     // put all the network logic in some function calls
 
-    async function sendImageTimelineHandler(fd: any, _serverUrl: string): Promise<TimelineStageResponse> {
+    async function sendImageTimelineHandler(fd: any, _serverUrl: string): Promise<TimelineCompositionResponse | Error> {
         try {
             if (!(fd instanceof FormData)) {
                 const message = 'Expected FormData payload for SendImageTimeline';
                 console.error(message);
                 toast.error(message);
-                return { ok: false, error: message, timeline: [] };
+                return { name: 'Expected FormData payload for SendImageTimeline', message: message } as Error;
             }
             const response = await fetch(_serverUrl, {
                 method: 'POST',
@@ -52,25 +53,29 @@ export const useMultiPartFormData = async (formData: any, currentAction: MultiPa
             if (contentType.includes('application/json')) {
                 // Expecting intermediary timeline stage
                 const result = await response.json();
-                const out: TimelineStageResponse = {
-                    ok: true,
+                const out: TimelineCompositionResponse = {
+                    /*ok: true,
                     timeline: result?.timeline,
                     batchId: result?.batchId,
+                    
+                    going to need to specify what exactly the response 
+                    should be here 
+                    */
                 };
                 return out;
             } else {
-                return { ok: false, error: 'Invalid content type', timeline: [] };
+                return { name: 'Invalid content type', message: 'Invalid content type' } as Error;
             }
 
         } catch (error: any) {
             const message = error instanceof Error ? error.message : 'Unknown error';
             console.error(message);
             toast.error(message);
-            return { ok: false, error: message, timeline: [] };
+            return { name: 'Unknown error', message: message } as Error;
         }
     }
 
-    async function imageTimelineHandler(payload: any, _serverUrl: string): Promise<TimelineStageResponse> {
+    async function imageTimelineHandler(payload: any, _serverUrl: string): Promise<TimelineCompositionResponse | Error> {
         try {
             const isFormData = payload instanceof FormData;
             const body = isFormData ? payload : JSON.stringify(payload ?? {});
@@ -93,12 +98,12 @@ export const useMultiPartFormData = async (formData: any, currentAction: MultiPa
             if (maybeJson && typeof (maybeJson as any).then === 'function') {
                 result = await (maybeJson as Promise<any>);
             }
-            return { ok: true, batchId: result?.batchId };
+            return { name: 'Unknown error', message: "Unknown error occured! No timeline returned!" } as Error;
         } catch (error: any) {
             const message = error instanceof Error ? error.message : 'Unknown error';
             console.error(message);
             toast.error(message);
-            return { ok: false, error: message };
+            return { name: 'Unknown error', message: message } as Error;
         }
     }
 
