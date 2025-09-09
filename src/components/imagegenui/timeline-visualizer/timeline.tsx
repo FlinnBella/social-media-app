@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Button } from '@/components/ui/button';
 import { TimelineCard } from './timelinecard';
-import type { ImageSegment } from '#types/multipart';
+import type { ImageSegment } from '#types/timeline';
 // when it's invoked, it's going to be done so via a fetch call
 //fetch call is going to fill it with a bunch of data,
 //data gets decomposed to the image segments
@@ -13,7 +13,7 @@ const MapImageSegments = (ImageSegments: ImageSegment[]) => {
     //want it to order the divs based off of the ordering property
     const sortedImageSegments = [...ImageSegments].sort((a, b) => a.ordering - b.ordering);
     return sortedImageSegments.map((segment) => {
-        return <TimelineCard key={segment.id} segment={segment} />
+        return <TimelineCard key={segment.imageIndex} segment={segment} />
     })
 }
 

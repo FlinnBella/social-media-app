@@ -37,6 +37,8 @@ export type ImageSegment = {
     ordering: number;
     startTime: number;
     duration: number;
+    imageIndex: number;
+    transition?: Transition;
     imageUrl?: Blob;
 }
 
@@ -49,4 +51,9 @@ export type TextSegment = {
 export type Music = {
     enabled: boolean;
     genre: string;
+}
+
+export type Transition = {
+    effect: string;
+    easing: string;
 }
