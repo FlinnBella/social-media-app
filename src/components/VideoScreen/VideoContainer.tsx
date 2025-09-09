@@ -1,7 +1,7 @@
 import React from 'react';
 import { Monitor, Smartphone } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import type { ImageSegment } from '#types/multipart';
+import type { ImageSegment, TextSegment } from '#types/timeline';
 import { Timeline } from '@/components/VideoScreen/imagegenui/timeline-visualizer/timeline';
 // removed unused types
 

@@ -1,6 +1,6 @@
 // no local state needed
 import { TimelineCard } from './timelinecard';
-import type { ImageSegment } from '#types/multipart';
+import type { ImageSegment } from '#types/timeline';
 import { FFMpegRequestButton } from '@/components/api-request-buttons/FFMpegRequestButton';
 import { VeoRequestButton } from '@/components/api-request-buttons/VeoRequestButton';
 import { useSubmission } from '@/context/SubmissionContext';
@@ -17,7 +17,7 @@ const { isLoading } = useSubmission();
 const MapImageSegments = (ImageSegments: ImageSegment[]) => {
     const sortedImageSegments = [...ImageSegments].sort((a, b) => a.ordering - b.ordering);
     return sortedImageSegments.map((segment) => {
-        return <TimelineCard key={segment.id} segment={segment} />
+        return <TimelineCard key={segment.imageIndex} segment={segment} />
     })
 }
 

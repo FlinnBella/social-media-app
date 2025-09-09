@@ -1,10 +1,12 @@
-import type { ImageSegment } from '#types/multipart';
+import type { ImageSegment, TextSegment } from '#types/timeline';
 
-export const TimelineCard = ({ segment }: { segment: ImageSegment }) => {
+
+export const TimelineCard = ({ segment, script }: { segment: ImageSegment, script: TextSegment }) => {
+    const imageUrl = segment.imageUrl ? URL.createObjectURL(segment.imageUrl) : undefined;
     return (
         <div>
-            <div>{segment.image}</div>
-            <div>{segment.script}</div>
+            <div><img src={imageUrl} alt="Image composition generated for video" /></div>
+            <div>{script.text}</div>
         </div>
     )
 }
