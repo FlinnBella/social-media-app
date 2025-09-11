@@ -22,7 +22,9 @@ export const PromptTemplateCard = React.memo(({ template, prompt, onApply }: Pro
                 <CardDescription>{template.description}</CardDescription>
             </CardHeader>
             <CardContent>
-                <img src={template.image} alt={template.header} />
+                <div className="w-full aspect-square overflow-hidden rounded">
+                    <img src={template.image} alt={template.header} className="w-full h-full object-cover" />
+                </div>
             </CardContent>
             <CardFooter>
             </CardFooter>

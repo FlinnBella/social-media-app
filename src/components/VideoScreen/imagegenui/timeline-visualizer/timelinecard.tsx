@@ -14,7 +14,7 @@ export const TimelineCard = ({ segment, script }: { segment: MakeTypeFieldsRequi
 
     return (
         <div className="flex flex-col gap-2">
-            <div className="w-full max-w-[200px] aspect-square rounded-lg overflow-hidden bg-black/5 dark:bg-white/5">
+            <div className="w-full aspect-square rounded-lg overflow-hidden bg-black/5 dark:bg-white/5">
                 <img
                     src={src}
                     alt="Image composition generated for video"

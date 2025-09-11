@@ -13,7 +13,7 @@ interface Props {
 
 export const GenerateTimelineButton: React.FC<Props> = ({ prompt, images, setHasSubmittedTimeline }) => {
 
-  const { submitTimeline, isLoading, setIsLoading } = useSubmission();
+  const { submitTimeline, isLoading } = useSubmission();
   const handleClick = async () => {
     if (isLoading) return;
     try {
@@ -32,7 +32,7 @@ export const GenerateTimelineButton: React.FC<Props> = ({ prompt, images, setHas
     toast.error(error instanceof Error ? error.message : 'Unknown error');
     setHasSubmittedTimeline(false);
   } finally {
-    setIsLoading(false);
+    // isLoading is managed by SubmissionContext.submitTimeline
   }
   };
 

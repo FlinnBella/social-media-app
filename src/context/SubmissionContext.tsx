@@ -1,6 +1,6 @@
 import React, { createContext, useCallback, useContext, useMemo, useState } from 'react';
 import { toast } from 'sonner';
-import type {  VideoResponse, VideoRequest } from '#types/multipart';
+import type {  VideoResponse } from '#types/multipart';
 import { useMultiPartFormData, MULTIPART_ACTIONS } from '@/hooks/useMultiPartFormData';
 import type { ApiEndpointKey } from '@/cfg';
 import { API_ENDPOINTS } from '@/cfg';
@@ -73,7 +73,6 @@ export const SubmissionProvider: React.FC<React.PropsWithChildren> = ({ children
         formData.append('image', file, file.name);
       }
       const path = API_ENDPOINTS['generateVideoTimeline'];
-      const url = import.meta.env.PROD ? path : `http://localhost:8080${path}`;
       const dev_url = `http://localhost:8080${path}`;
       const resp = await useMultiPartFormData(formData, MULTIPART_ACTIONS.SendImageTimeline, dev_url);
       // When the timeline API responds, update timeline state and assistant message
@@ -140,14 +139,13 @@ export const SubmissionProvider: React.FC<React.PropsWithChildren> = ({ children
       for (const file of images) {
         formData.append('image', file, file.name);
       }
-      const path = API_ENDPOINTS[apiKey];
-      const url = import.meta.env.PROD ? path : `http://localhost:8080${path}`;
+      // const path = API_ENDPOINTS[apiKey];
 /*
 Want to dynamically choose eventually 'what' path;
 free ffmpeg or veo3, based on the button params; we'll give it a second however,
 for now
 */
-      const resp = await useMultiPartFormData(formData, MULTIPART_ACTIONS.finalVideo, API_ENDPOINTS.generateVideoProReels);
+      const resp = await useMultiPartFormData(formData, MULTIPART_ACTIONS.finalVideo, apiKey);
       // Final video request may return a URL or success boolean
       if ((resp as VideoResponse)) {
         const { videoUrl } = resp as VideoResponse;

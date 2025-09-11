@@ -63,7 +63,7 @@ const MapImageSegments = (
         return (
             <div key={segment.ordering} className="flex flex-col items-start gap-1">
                 <div id={aboveId} className="h-2 w-8" />
-                <div id={cardId}>
+                <div className="w-28 aspect-square" id={cardId}>
                     <TimelineCard key={segment.ordering} segment={segmentWithFile} script={matchedScript} />
                 </div>
                 {prevCardId && cardId&& <Xarrow start={prevCardId} end={cardId} />}

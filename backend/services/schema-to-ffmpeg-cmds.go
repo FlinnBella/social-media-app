@@ -25,6 +25,18 @@ import (
 
 // AudioConfig holds prepared audio assets
 
+/*
+CODEBASE IS INSANELY CLUTTERED,
+NEED TO IMPLEMENT METHODS TO CLEAN IT UP IMMEDIATELY
+
+STEPS:
+	- TRY TO CUT DOWN ON NUMBER OF STRUCTS
+	- TRY TO CLEAN UP INTERFACES AND NEWFUNCTIONS AND THINGS
+	- PORT THE COMPILERS INTO SOMETHING MORE USEABLE, AND BREAK IT UP
+	- IN IMPLS FOR THE PRO SERVICE AND THE REELS SERVICE
+
+*/
+
 type AudioConfig struct {
 	ttsNarrationPaths ttsNarartionFiles // path to narration (mp3/m4a)
 	MusicEnabled      bool
@@ -64,28 +76,81 @@ type CommandBuildInput struct {
 	OutputPath string
 }
 
-// FFmpegCommandBuilder converts a high-level composition into a single ffmpeg command
+// FFmpegBuilder defines the interface for FFmpeg command generation
+type FFmpegBuilder interface {
+	Build(in CommandBuildInput) ([]string, error)
+}
 
+// FFmpegCommandBuilder converts a high-level composition into a single ffmpeg command
 type FFmpegCommandBuilder struct{}
 
 func NewFFmpegCommandBuilder() *FFmpegCommandBuilder { return &FFmpegCommandBuilder{} }
 
-// High-level compiler orchestrating schema -> assets -> args
-// Accepts the ai-generated composition JSON and services to resolve audio assets.
-
-type CompositionCompiler struct {
-	builder      *FFmpegCommandBuilder
-	bgMusic      *BackgroundMusic
-	voiceService *ElevenLabsService
+// ReelsBuilder - optimized for images + social media
+type ReelsBuilder struct {
+	*FFmpegCommandBuilder
 }
 
-//Can see the compiler takes the music and voice services; all-in-one stop
+func NewReelsBuilder() *ReelsBuilder {
+	return &ReelsBuilder{FFmpegCommandBuilder: NewFFmpegCommandBuilder()}
+}
 
-func NewCompositionCompiler(builder *FFmpegCommandBuilder, bg *BackgroundMusic, els *ElevenLabsService) *CompositionCompiler {
+// ProBuilder - optimized for videos + high quality
+type ProBuilder struct {
+	*FFmpegCommandBuilder
+}
+
+func NewProBuilder() *ProBuilder {
+	return &ProBuilder{FFmpegCommandBuilder: NewFFmpegCommandBuilder()}
+}
+
+// BackgroundMusicProvider defines the minimal behavior needed for background music resolution
+type BackgroundMusicProvider interface {
+	CreateBackgroundMusic(mood string, genre string) (*MusicFile, error)
+}
+
+// TTSProvider defines the minimal behavior needed for TTS asset generation
+type TTSProvider interface {
+	GenerateSpeechToTmp(input models.TTSInput, tmpDir string) (filenames []string, fileoutputmap map[string]string, err error)
+}
+
+//Compiler structs
+
+// ReelsCompiler - standard video compilation for social media reels
+type ReelsCompiler struct {
+	builder      FFmpegBuilder
+	bgMusic      BackgroundMusicProvider
+	voiceService TTSProvider
+}
+
+func NewReelsCompiler(builder FFmpegBuilder, bg BackgroundMusicProvider, els TTSProvider) *ReelsCompiler {
+	return &ReelsCompiler{builder: builder, bgMusic: bg, voiceService: els}
+}
+
+// ProCompiler - high-quality video compilation with different ffmpeg strategy
+type ProCompiler struct {
+	builder      FFmpegBuilder
+	bgMusic      BackgroundMusicProvider
+	voiceService TTSProvider
+}
+
+func NewProCompiler(builder FFmpegBuilder, bg BackgroundMusicProvider, els TTSProvider) *ProCompiler {
+	return &ProCompiler{builder: builder, bgMusic: bg, voiceService: els}
+}
+
+// Legacy CompositionCompiler for backward compatibility
+type CompositionCompiler struct {
+	builder      *FFmpegCommandBuilder
+	bgMusic      BackgroundMusicProvider
+	voiceService TTSProvider
+}
+
+func NewCompositionCompiler(builder *FFmpegCommandBuilder, bg BackgroundMusicProvider, els TTSProvider) *CompositionCompiler {
 	return &CompositionCompiler{builder: builder, bgMusic: bg, voiceService: els}
 }
 
-type Compilier interface {
+// VideoCompiler defines the interface for video compilation strategies
+type VideoCompiler interface {
 	Compile(jsonAISchemaBlob []byte, imagePaths []string) ([]string, []string, string, error)
 }
 
@@ -184,6 +249,41 @@ func (cc *CompositionCompiler) Compile(jsonAISchemaBlob []byte, imagePaths []str
 		return nil, []string{}, "", err
 	}
 	return args, ttsNarrationPaths, autoOutput, nil
+}
+
+// Reels Compiler and Compile both have
+// Compile implements VideoCompiler interface for ReelsCompiler
+// Reels-specific compilation: optimized for social media, images, fast processing
+func (rc *ReelsCompiler) Compile(jsonAISchemaBlob []byte, imagePaths []string) ([]string, []string, string, error) {
+	// Reels-specific schema processing
+	// TODO: Parse Reels-specific JSON schema
+	// TODO: Process images for social media optimization
+	// TODO: Generate Reels-specific FFmpeg args
+
+	// For now, delegate to existing logic but with Reels builder
+	cc := &CompositionCompiler{
+		builder:      rc.builder.(*FFmpegCommandBuilder), // Cast to concrete type for now
+		bgMusic:      rc.bgMusic,
+		voiceService: rc.voiceService,
+	}
+	return cc.Compile(jsonAISchemaBlob, imagePaths)
+}
+
+// Compile implements VideoCompiler interface for ProCompiler
+// Pro-specific compilation: high quality, videos, professional processing
+func (pc *ProCompiler) Compile(jsonAISchemaBlob []byte, imagePaths []string) ([]string, []string, string, error) {
+	// Pro-specific schema processing
+	// TODO: Parse Pro-specific JSON schema
+	// TODO: Process videos for high-quality output
+	// TODO: Generate Pro-specific FFmpeg args (different codecs, quality settings)
+
+	// For now, delegate to existing logic but with Pro builder
+	cc := &CompositionCompiler{
+		builder:      pc.builder.(*FFmpegCommandBuilder), // Cast to concrete type for now
+		bgMusic:      pc.bgMusic,
+		voiceService: pc.voiceService,
+	}
+	return cc.Compile(jsonAISchemaBlob, imagePaths)
 }
 
 func (b *FFmpegCommandBuilder) Build(in CommandBuildInput) ([]string, error) {
@@ -336,7 +436,6 @@ func (b *FFmpegCommandBuilder) Build(in CommandBuildInput) ([]string, error) {
 	}
 
 	// Audio processing: build modular stems [ma] (music) and [na] (narration), then create mixed [mixa]
-	audioMaps := []string{}
 	// Music stem
 	if musicIdx >= 0 {
 		mv := clamp01(in.Audio.MusicVolume)
@@ -349,6 +448,7 @@ func (b *FFmpegCommandBuilder) Build(in CommandBuildInput) ([]string, error) {
 	}
 	filter += fmt.Sprintf("[%d:a]volume=%0.2f,apad,atrim=0:%f,asetpts=PTS-STARTPTS[na];", narrIdx, nv, float64(in.Metadata_FFmpeg.TotalDuration))
 	// Mixed overlay track
+	var audioMaps []string
 	if musicIdx >= 0 {
 		filter += "[na][ma]amix=inputs=2:duration=longest:dropout_transition=2[mixa];"
 		audioMaps = []string{"[mixa]"}
@@ -386,6 +486,13 @@ func (b *FFmpegCommandBuilder) Build(in CommandBuildInput) ([]string, error) {
 	args = append(args, filepath.Clean(in.OutputPath))
 	return args, nil
 }
+
+/*
+
+FFMPEG HELPER FUNCTIONS
+
+
+*/
 
 func clamp01(v float64) float64 {
 	if v < 0 {

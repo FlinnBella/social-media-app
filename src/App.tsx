@@ -1,5 +1,4 @@
-import { useState, useRef, useEffect, useCallback } from "react";
-import { toast } from "sonner";
+import { useState, useEffect, useCallback } from "react";
 import { Upload, Camera } from "lucide-react";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
@@ -22,6 +21,7 @@ import { PROMPT_TYPES } from "@/features/prompt-templates/prompttypes";
 //types
 import type { Timeline as TimelineType } from "#types/timeline";
 import { usePrompt } from "./features/prompt-templates/usePrompt";
+import { useUserState } from "@/context/UserContext";
 // MakeTypeFieldsRequired not used in this file
 
 import { PromptTemplateContainer } from "./features/prompt-templates/PromptTemplateContainer";
@@ -29,19 +29,15 @@ import { PromptCards, PromptCard } from "./features/prompt-templates/prompttypes
 
 // Message type handled via SubmissionContext
 
+import { IMAGE_ACCEPT_ATTRIBUTE } from "@/utilites/useImageSelection";
+
 function App() {
   const { isLoading, messages, timeline } = useSubmission();
-  const [inputText, setInputText] = useState("");
-  const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
+  const { prompt: inputText, setPrompt: setInputText, selectedFiles, previewUrls, handleFileSelect, removeSelectedFile, clearAllSelected, fileInputRef, cameraInputRef } = useUserState();
   const [isMobile, setIsMobile] = useState(false);
-  const [previewUrls, setPreviewUrls] = useState<string[]>([]);
   // removed unused pendingApproval state
 
   const [hasSubmittedTimeline, setHasSubmittedTimeline] = useState(false);
-
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const cameraInputRef = useRef<HTMLInputElement>(null);
-  const previewUrlsRef = useRef<string[]>([]);
 
   const { textareaRef, adjustHeight } = useAutoResizeTextarea({
     minHeight: 72,
@@ -58,45 +54,7 @@ function App() {
     return () => window.removeEventListener("resize", checkMobile);
   }, []);
 
-  useEffect(() => {
-    // Revoke previously created URLs before creating new ones
-    previewUrlsRef.current.forEach((url) => {
-      try {
-        URL.revokeObjectURL(url);
-      } catch {}
-    });
-    const urls = selectedFiles.map((file) => URL.createObjectURL(file));
-    previewUrlsRef.current = urls;
-    setPreviewUrls(urls);
-    return () => {
-      urls.forEach((url) => {
-        try {
-          URL.revokeObjectURL(url);
-        } catch {}
-      });
-    };
-  }, [selectedFiles]);
-
-  const removeSelectedFile = (index: number) => {
-    setSelectedFiles((prev) => prev.filter((_, i) => i !== index));
-  };
-
-  const clearAllSelected = () => {
-    setSelectedFiles([]);
-  };
-
-  const handleFileSelect = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const files = event.target.files;
-    if (!files) return;
-    const imageFiles = Array.from(files).filter((f) =>
-      f.type.startsWith("image/")
-    );
-    if (imageFiles.length === 0) {
-      toast.error("Please select image files");
-      return;
-    }
-    setSelectedFiles((prev) => [...prev, ...imageFiles]);
-  };
+  // image selection and validation handled in useImageSelection()
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -109,10 +67,11 @@ function App() {
  /*
 CALLBACKS START
 */
-const onApplyNewPrompt = useCallback((prompt: string, promptType: keyof typeof PROMPT_TYPES) => {
-  prompt = inputText;
-  setInputText(`${usePrompt(prompt, promptType)}`);
-}, []);
+const onApplyNewPrompt = useCallback((nextText: string, promptType: keyof typeof PROMPT_TYPES) => {
+  const transformed = usePrompt(nextText || inputText, promptType);
+  const updated = inputText ? `${inputText}\n${transformed}` : transformed;
+  setInputText(updated);
+}, [inputText, setInputText]);
 
 /*
 CALLBACKS END
@@ -233,7 +192,7 @@ CALLBACKS END
                       <input
                         ref={fileInputRef}
                         type="file"
-                        accept="image/*"
+                        accept={IMAGE_ACCEPT_ATTRIBUTE}
                         multiple
                         onChange={handleFileSelect}
                         className="hidden"
@@ -241,7 +200,7 @@ CALLBACKS END
                       <input
                         ref={cameraInputRef}
                         type="file"
-                        accept="image/*"
+                        accept={IMAGE_ACCEPT_ATTRIBUTE}
                         capture="environment"
                         multiple
                         onChange={handleFileSelect}

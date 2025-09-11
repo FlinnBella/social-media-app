@@ -19,26 +19,44 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// these are all tools the function can tap into
+// VideoHandler uses compiler-first architecture
 type VideoHandler struct {
-	cfg              *config.APIConfig
+	cfg           *config.APIConfig
+	reelsCompiler services.VideoCompiler
+	proCompiler   services.VideoCompiler
+	// Services used directly by handlers (not through compilers)
 	contentGenerator *services.ContentGenerator
-	elevenLabs       *services.ElevenLabsService
-	backgroundMusic  *services.BackgroundMusic
-	ffmpegCompiler   *services.CompositionCompiler
 	N8NService       *services.N8NService
 	veo              *services.VeoService
 }
 
 func NewVideoHandler(cfg *config.APIConfig) *VideoHandler {
+	// Create shared services
+	bgMusic := services.NewBackgroundMusic(cfg)
+	elevenLabs := services.NewElevenLabsService(cfg)
+
+	// Create different builders for different compilers
+	reelsBuilder := services.NewReelsBuilder()
+	proBuilder := services.NewProBuilder()
+
 	return &VideoHandler{
-		cfg:              cfg,
+		//api's
+		cfg: cfg,
+
+		// Compilers with their own builders and shared services
+		reelsCompiler: services.NewReelsCompiler(reelsBuilder, bgMusic, elevenLabs),
+		proCompiler:   services.NewProCompiler(proBuilder, bgMusic, elevenLabs),
+
+		//Actually used to generate schema; should
+		//eventually pass it n8n service as a method,
+		//as it invokes n8n under the hood
 		contentGenerator: services.NewContentGenerator(cfg),
-		elevenLabs:       services.NewElevenLabsService(cfg),
-		backgroundMusic:  services.NewBackgroundMusic(cfg),
-		ffmpegCompiler:   services.NewCompositionCompiler(services.NewFFmpegCommandBuilder(), services.NewBackgroundMusic(cfg), services.NewElevenLabsService(cfg)),
-		N8NService:       services.NewN8NService(cfg),
-		veo:              services.NewVeoService(cfg),
+
+		//n8n service to get the JSON, make network requests
+		N8NService: services.NewN8NService(cfg),
+
+		//veo to geenrate videos, fed into compilier
+		veo: services.NewVeoService(cfg),
 	}
 }
 
@@ -132,7 +150,22 @@ func (vh *VideoHandler) GenerateProReels(c *gin.Context) {
 		Everything below here is going to just be put in the veo function handler
 		returns name and bytes, which we c.DataFromReader straight to the client as bytes
 	*/
-	mp4_name, video_bytes := vh.veo.GenerateVideoMultipart(c, boundary)
+
+	/*
+	   Need to change this to read from a FFMPEG method
+	*/
+
+	mp4_name, video_bytes_slices := vh.veo.GenerateVideoMultipart(c, boundary)
+
+	// TODO: For Pro compilation, we could also use vh.proCompiler.Compile()
+	// with N8N schema + images for ffmpeg-based Pro videos
+	// Currently using Veo for Pro videos (AI-generated)
+
+	// Flatten video bytes slices into single byte slice
+	var video_bytes []byte
+	for _, chunk := range video_bytes_slices {
+		video_bytes = append(video_bytes, chunk...)
+	}
 
 	//content disposition mapping
 	ContentDisposition := map[string]string{"Content-Disposition": fmt.Sprintf("attachment; filename=\"%s\"", mp4_name)}
@@ -256,8 +289,8 @@ func (vh *VideoHandler) GenerateVideoReels(c *gin.Context) {
 		return
 	}
 
-	// Compile with AI schema blob and local image paths
-	args, _, outputPath, err := vh.ffmpegCompiler.Compile(respBytes, localImagePaths)
+	// Compile with AI schema blob and local image paths using reels compiler
+	args, _, outputPath, err := vh.reelsCompiler.Compile(respBytes, localImagePaths)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": err.Error()})
 		return
@@ -298,6 +331,7 @@ Previous implementation
 */
 
 // this function is currently broken; fix later
+
 func (vh *VideoHandler) GenerateVideoPexels(c *gin.Context) {
 	// Enforce multipart/form-data only
 	ct := c.GetHeader("Content-Type")

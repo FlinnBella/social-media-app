@@ -7,6 +7,7 @@ import App from './App.tsx';
 import './index.css';
 import { Toaster } from 'sonner';
 import { SubmissionProvider } from '@/context/SubmissionContext';
+import { UserStateProvider } from '@/context/UserContext';
 import { ErrorBoundary } from 'react-error-boundary';
 import ErrorFallback from '@/components/Error/ErrorFallback.tsx';
 
@@ -22,9 +23,11 @@ createRoot(document.getElementById('root')!).render(
         // no-op; could reset global state here if needed
       }}
     >
-      <SubmissionProvider>
-        <App />
-      </SubmissionProvider>
+      <UserStateProvider>
+        <SubmissionProvider>
+          <App />
+        </SubmissionProvider>
+      </UserStateProvider>
     </ErrorBoundary>
     <Toaster />
   </StrictMode>

@@ -66,3 +66,46 @@
     @apply bg-background text-foreground;
   }
 }
+
+/* Typewriter Effect Styles */
+@layer components {
+  .typewriter-cursor {
+    @apply inline-block;
+    animation: typewriter-blink 1s infinite;
+  }
+  
+  .typewriter-cursor-fast {
+    @apply inline-block;
+    animation: typewriter-blink 0.5s infinite;
+  }
+  
+  .typewriter-cursor-slow {
+    @apply inline-block;
+    animation: typewriter-blink 2s infinite;
+  }
+  
+  @keyframes typewriter-blink {
+    0%, 50% {
+      opacity: 1;
+    }
+    51%, 100% {
+      opacity: 0;
+    }
+  }
+  
+  /* Smooth typewriter container */
+  .typewriter-container {
+    @apply font-mono;
+  }
+  
+  /* Alternative cursor styles */
+  .typewriter-cursor-block {
+    @apply inline-block w-2 h-5 bg-current ml-1;
+    animation: typewriter-blink 1s infinite;
+  }
+  
+  .typewriter-cursor-underline {
+    @apply inline-block border-b-2 border-current ml-1;
+    animation: typewriter-blink 1s infinite;
+  }
+}

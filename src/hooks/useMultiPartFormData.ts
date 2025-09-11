@@ -25,7 +25,7 @@ export const useMultiPartFormData = async (formData: any, currentAction: MultiPa
         case MULTIPART_ACTIONS.imageTimeline:
             return imageTimelineHandler(formData);
         case MULTIPART_ACTIONS.finalVideo:
-            return finalVideoHandler({formData, apiPath: cfg[0]});
+            return finalVideoHandler({formData, apiKey: cfg[0]});
         default:
             console.error('Invalid form data type');
             toast.error('Invalid form data type');
@@ -120,45 +120,25 @@ export const useMultiPartFormData = async (formData: any, currentAction: MultiPa
 Shoot images and prompt up to the server
 */
     async function finalVideoHandler(VideoRequest: VideoRequest): Promise<VideoResponse> {
-        switch (VideoRequest.apiPath) {
-            case 'generateVideoReels': {
-                const res = await fetch(API_ENDPOINTS.generateVideoReels, {
-                    method: 'POST',
-                    body: VideoRequest.formData,
-                });
-                if (!res.ok) {
-                    throw new Error(`generateVideoReels failed: ${res.status} ${res.statusText}`);
-                }
-                const blob = await res.blob();
-                const objectUrl = URL.createObjectURL(blob);
-                const result = { videoUrl: objectUrl } as const;
-                const parsed = ZVideoResponseUniversal.safeParse(result);
-                if (!parsed.success) {
-                    URL.revokeObjectURL(objectUrl);
-                    throw new Error('Invalid response');
-                }
-                return parsed.data;
-            }
-            case 'generateVideoProReels': {
-                const res = await fetch(API_ENDPOINTS.generateVideoProReels, {
-                    method: 'POST',
-                    body: VideoRequest.formData,
-                });
-                if (!res.ok) {
-                    throw new Error(`generateVideoProReels failed: ${res.status} ${res.statusText}`);
-                }
-                const blob = await res.blob();
-                const objectUrl = URL.createObjectURL(blob);
-                const result = { videoUrl: objectUrl } as const;
-                const parsed = ZVideoResponseUniversal.safeParse(result);
-                if (!parsed.success) {
-                    URL.revokeObjectURL(objectUrl);
-                    throw new Error('Invalid response');
-                }
-                return parsed.data;
-            }
-            default:
-                throw new Error('Invalid API path');
+        const endpoint = API_ENDPOINTS[VideoRequest.apiKey];
+        if (!endpoint) {
+            throw new Error('Invalid API key');
         }
+        const res = await fetch(endpoint, {
+            method: 'POST',
+            body: VideoRequest.formData,
+        });
+        if (!res.ok) {
+            throw new Error(`${VideoRequest.apiKey} failed: ${res.status} ${res.statusText}`);
+        }
+        const blob = await res.blob();
+        const objectUrl = URL.createObjectURL(blob);
+        const result = { videoUrl: objectUrl } as const;
+        const parsed = ZVideoResponseUniversal.safeParse(result);
+        if (!parsed.success) {
+            URL.revokeObjectURL(objectUrl);
+            throw new Error('Invalid response');
+        }
+        return parsed.data;
     }
 };
