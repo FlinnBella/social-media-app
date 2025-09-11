@@ -4,11 +4,10 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"time"
 
-	"mime"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -79,6 +78,10 @@ Wrapper around the N8N Service which directs the data to the correct
 N8N endpoint
 */
 
+/*
+Actully, there should really just be a universal timeline schema if I'm not mistaken?
+*/
+
 func (vh *VideoHandler) GenerateVideoTimeline(c *gin.Context) {
 	//GUARDS for multipart/form-data
 	ct := c.GetHeader("Content-Type")
@@ -113,71 +116,100 @@ func (vh *VideoHandler) GenerateVideoTimeline(c *gin.Context) {
 }
 
 /*
-this tool will be an api endpoint, and will be called to actually generate a video for the client
-should take in a modified prompt, from the timeline schema
-make a seprate api request, but pass modified data to it
+Both of these are tools to generate the videos and return to the client
+Should typically be invoked after the client has already generate a VideoTimelineSchema
 */
 
 /*
-This method has been completely FUCKED by Cursor AI; need to fix it
+GenerateProReels; Handler to invoke the pro compiler
 */
 func (vh *VideoHandler) GenerateProReels(c *gin.Context) {
 	// Enforce multipart/form-data only
-	//GUARDS
 	ct := c.GetHeader("Content-Type")
 	if !strings.HasPrefix(ct, "multipart/form-data") {
-		c.JSON(http.StatusUnsupportedMediaType, gin.H{"status": "error", "error": "Content-Type must be multipart/form-data"})
+		c.JSON(http.StatusUnsupportedMediaType, gin.H{
+			"error":  "Content-Type must be multipart/form-data",
+			"status": "error",
+		})
 		return
 	}
 
-	mediaType, params, err := mime.ParseMediaType(ct)
-	if err != nil || !strings.HasPrefix(mediaType, "multipart/") {
-		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "invalid multipart content-type"})
+	// Parse incoming multipart form to extract and save images locally
+	form, err := c.MultipartForm()
+	if err != nil || form == nil {
+		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "invalid multipart form"})
 		return
 	}
-	boundary := params["boundary"]
-	if boundary == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "missing multipart boundary"})
+	files := form.File["image"]
+	if len(files) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "at least one image is required (field name: image)"})
 		return
 	}
-	// GUARDS END
 
-	/*
-		Everything below here is going to just be put in the veo function handler
-		returns name and bytes, which we c.DataFromReader straight to the client as bytes
-	*/
-
-	/*
-	   Need to change this to read from a FFMPEG method
-	*/
-
-	mp4_name, video_bytes_slices := vh.veo.GenerateVideoMultipart(c, boundary)
-
-	// TODO: For Pro compilation, we could also use vh.proCompiler.Compile()
-	// with N8N schema + images for ffmpeg-based Pro videos
-	// Currently using Veo for Pro videos (AI-generated)
-
-	// Flatten video bytes slices into single byte slice
-	var video_bytes []byte
-	for _, chunk := range video_bytes_slices {
-		video_bytes = append(video_bytes, chunk...)
+	imageTmpDir := filepath.Join(os.TempDir(), "pro_images")
+	if err := os.MkdirAll(imageTmpDir, 0o755); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": fmt.Sprintf("failed to create temp dir: %v", err)})
+		return
 	}
 
-	//content disposition mapping
-	ContentDisposition := map[string]string{"Content-Disposition": fmt.Sprintf("attachment; filename=\"%s\"", mp4_name)}
+	var localImagePaths []string
+	for idx, fh := range files {
+		src, err := fh.Open()
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": fmt.Sprintf("failed to open uploaded file: %v", err)})
+			return
+		}
+		defer src.Close()
 
-	c.DataFromReader(http.StatusOK, int64(len(video_bytes)), "video/mp4", bytes.NewReader(video_bytes), ContentDisposition)
-}
+		basename := fmt.Sprintf("%03d_%s", idx, fh.Filename)
+		localPath := filepath.Join(imageTmpDir, basename)
+		out, err := os.Create(localPath)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": fmt.Sprintf("failed to create temp image file: %v", err)})
+			return
+		}
+		if _, err := io.Copy(out, src); err != nil {
+			out.Close()
+			c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": fmt.Sprintf("failed to write temp image file: %v", err)})
+			return
+		}
+		out.Close()
+		localImagePaths = append(localImagePaths, localPath)
+	}
 
-/*
-SSEStream to send small, event based updates to the client
-*/
-func (vh *VideoHandler) SSEStream(c *gin.Context) {
-	c.Header("Content-Type", "text/event-stream")
+	schemaValues := form.Value["schema"]
+	if len(schemaValues) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "schema file is required"})
+		return
+	}
+	schema := schemaValues[0]
+
+	// Compile with AI schema blob and local image paths using PRO compiler
+	// Compiler handles its own intermediate file cleanup and FFmpeg execution
+	videoStream, err := vh.proCompiler.Compile([]byte(schema), localImagePaths)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": err.Error()})
+		return
+	}
+
+	// Clean up uploaded images after streaming
+	defer func() {
+		for _, file := range localImagePaths {
+			os.Remove(file)
+		}
+	}()
+
+	// Stream video directly to client
+	c.Header("Content-Type", "video/mp4")
 	c.Header("Cache-Control", "no-cache")
-	c.SSEvent("error", gin.H{"status": "error", "error": "SSE not implemented"})
-	c.Writer.Flush()
-	return
+
+	if _, err := io.Copy(c.Writer, videoStream); err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"status": "error",
+			"error":  fmt.Sprintf("failed to stream video: %v", err),
+		})
+		return
+	}
 }
 
 /*
@@ -247,79 +279,70 @@ func (vh *VideoHandler) GenerateVideoReels(c *gin.Context) {
 		localImagePaths = append(localImagePaths, localPath)
 	}
 
-	// Forward the original multipart body to N8N Reels webhook without rebuilding
-	targetURL := vh.cfg.N8NREELSURL
-	if targetURL == "" {
-		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": "N8N Reels URL not configured"})
+	schemaValues := form.Value["schema"]
+	if len(schemaValues) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": "schema file is required"})
 		return
 	}
-
-	req, err := http.NewRequest("POST", targetURL, bytes.NewReader(origBody))
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": fmt.Sprintf("failed to create upstream request: %v", err)})
-		return
-	}
-	// Preserve the original Content-Type with boundary
-	req.Header.Set("Content-Type", ct)
-
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"status": "error", "error": fmt.Sprintf("upstream request failed: %v", err)})
-		return
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		upstreamBody, _ := io.ReadAll(resp.Body)
-		c.JSON(http.StatusBadGateway, gin.H{
-			"status": "error",
-			"error":  fmt.Sprintf("upstream %s: %s", resp.Status, string(upstreamBody)),
-		})
-		return
-	}
-
-	// Read upstream JSON response body
-	respBytes, readUpErr := io.ReadAll(resp.Body)
-	if readUpErr != nil {
-		c.JSON(http.StatusBadGateway, gin.H{"status": "error", "error": fmt.Sprintf("failed to read upstream response: %v", readUpErr)})
-		return
-	}
+	schema := schemaValues[0]
 
 	// Compile with AI schema blob and local image paths using reels compiler
-	args, _, outputPath, err := vh.reelsCompiler.Compile(respBytes, localImagePaths)
+	// Compiler handles its own intermediate file cleanup and FFmpeg execution
+	videoStream, err := vh.reelsCompiler.Compile([]byte(schema), localImagePaths)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": err.Error()})
 		return
 	}
-	defer os.Remove(outputPath)
 
-	cmd := exec.Command("ffmpeg", args...)
-	// Run ffmpeg and capture output for diagnostics
-	if output, err := cmd.CombinedOutput(); err != nil {
-		fmt.Printf("ffmpeg args: %v\n", args)
-		fmt.Printf("ffmpeg error: %v\n", err)
-		fmt.Printf("ffmpeg output: %s\n", string(output))
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"status":  "error",
-			"error":   fmt.Sprintf("ffmpeg failed: %v", err),
-			"details": string(output),
-		})
-		return
-	}
+	// Clean up uploaded images after streaming
+	defer func() {
+		for _, file := range localImagePaths {
+			os.Remove(file)
+		}
+	}()
 
-	// Ensure output file exists and is non-empty before serving
-	if fi, statErr := os.Stat(outputPath); statErr != nil || fi.Size() == 0 {
+	// Stream video directly to client
+	c.Header("Content-Type", "video/mp4")
+	c.Header("Cache-Control", "no-cache")
+
+	if _, err := io.Copy(c.Writer, videoStream); err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status": "error",
-			"error":  fmt.Sprintf("output file missing or empty: %v", statErr),
+			"error":  fmt.Sprintf("failed to stream video: %v", err),
 		})
 		return
 	}
 
-	// After ffmpeg finishes and you have outputPath
-	c.Header("Content-Type", "video/mp4")
-	c.File(outputPath) // streams via http.ServeFile; supports Range (seek/scrub)
+}
 
+/*
+SSEStream to send small, event based updates to the client
+*/
+func (vh *VideoHandler) SSEStream(c *gin.Context) {
+	c.Header("Content-Type", "text/event-stream")
+	c.Header("Cache-Control", "no-cache")
+	c.Header("Connection", "keep-alive")
+	c.Header("Access-Control-Allow-Origin", "*")
+
+	// Send initial connection event
+	c.SSEvent("connected", gin.H{"status": "connected"})
+	c.Writer.Flush()
+
+	// Keep connection alive and send periodic updates
+	ticker := time.NewTicker(1 * time.Second)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-c.Request.Context().Done():
+			// Client disconnected
+			return
+		case <-ticker.C:
+			// Send heartbeat
+			c.SSEvent("heartbeat", gin.H{"timestamp": time.Now().Unix()})
+			c.Writer.Flush()
+		}
+	}
 }
 
 /*

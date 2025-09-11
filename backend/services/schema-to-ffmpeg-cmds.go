@@ -3,10 +3,13 @@ package services
 import (
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"social-media-ai-video/models"
-	"social-media-ai-video/models/video_ffmpeg"
+	video_models "social-media-ai-video/models/timeline"
+	video_models_reels_ffmpeg "social-media-ai-video/models/video_ffmpeg"
 	"sort"
 	"strconv"
 	"time"
@@ -70,19 +73,18 @@ type Metadata_Universal_FFmpeg struct {
 
 type CommandBuildInput struct {
 	Metadata_FFmpeg Metadata_Universal_FFmpeg
-	Timeline        video_ffmpeg.Timeline
+	Timeline        video_models_reels_ffmpeg.Timeline
 	// Images referenced by index in timeline (ImageIndex)
 	ImagePaths []string
 	// Audio assets
 	Audio AudioConfig
-	// Output file path (absolute or working-directory relative)
+	// Output path for the final video
 	OutputPath string
 }
 
 // VideoCompiler defines the interface for video compilation strategies
 type VideoCompiler interface {
-	Compile(jsonAISchemaBlob []byte, imagePaths []string) ([]string, []string, string, error)
-	Build(in CommandBuildInput) ([]string, error)
+	Compile(jsonSchemaBlob []byte, InputFilePaths []string) (io.Reader, error)
 }
 
 //Compiler structs
@@ -107,27 +109,43 @@ func NewProCompiler(bg *BackgroundMusic, els *ElevenLabsService) *ProCompiler {
 	return &ProCompiler{bgMusic: *bg, voiceService: *els}
 }
 
-// Compile takes the AI JSON blob and image paths (ordered by index) and returns ffmpeg args and resolved output paths used.
-func (rc *ReelsCompiler) Compile(jsonAISchemaBlob []byte, imagePaths []string) ([]string, []string, string, error) {
+// Compile takes the AI JSON blob and image paths and returns a video stream
+// Handles its own cleanup of intermediate files
+func (rc *ReelsCompiler) Compile(jsonSchemaBlob []byte, InputImagePaths []string) (io.Reader, error) {
+	var ffmpegTimeline video_models_reels_ffmpeg.Timeline
+	err := json.Unmarshal(jsonSchemaBlob, &ffmpegTimeline)
+	if err != nil {
+		return nil, fmt.Errorf("invalid composition json: %v. Given json: %s", err, string(jsonSchemaBlob))
+	}
+	// Track intermediate files for cleanup
+	var intermediateFiles []string
+
+	// Clean up intermediate files when function exits
+	defer func() {
+		for _, file := range intermediateFiles {
+			os.Remove(file)
+		}
+	}()
+
 	//schema object
-	var vc video_ffmpeg.VideoCompositionResponse
+	var vc video_models_reels_ffmpeg.VideoCompositionResponse
 
 	// unwrap optional top-level {"output": ...} wrapper if present
 	var outer struct {
 		Output json.RawMessage `json:"output"`
 	}
-	if err := json.Unmarshal(jsonAISchemaBlob, &outer); err == nil && len(outer.Output) > 0 {
-		jsonAISchemaBlob = outer.Output
+	if err := json.Unmarshal(jsonSchemaBlob, &outer); err == nil && len(outer.Output) > 0 {
+		jsonSchemaBlob = outer.Output
 	}
 
 	//jsonAISchemaBlob should conform to schema, place in vc
-	if err := json.Unmarshal(jsonAISchemaBlob, &vc); err != nil {
-		return nil, []string{}, "", fmt.Errorf("invalid composition json: %v. Given json: %s", err, string(jsonAISchemaBlob))
+	if err := json.Unmarshal(jsonSchemaBlob, &vc); err != nil {
+		return nil, fmt.Errorf("invalid composition json: %v. Given json: %s", err, string(jsonSchemaBlob))
 	}
 
 	// Map Properties.Metadata.Properties
 	if len(vc.Metadata.Resolution) != 2 {
-		return nil, []string{}, "", fmt.Errorf("invalid resolution resolution array %v", vc.Metadata.Resolution)
+		return nil, fmt.Errorf("invalid resolution resolution array %v", vc.Metadata.Resolution)
 	}
 	fps := 30
 	if vc.Metadata.Fps != "" {
@@ -153,45 +171,90 @@ func (rc *ReelsCompiler) Compile(jsonAISchemaBlob []byte, imagePaths []string) (
 	ttsNarrationPaths := []string{}
 
 	//Generate tts narration elevenlabs
-	if &rc.voiceService != nil {
+	if rc.voiceService != (ElevenLabsService{}) {
 		// Ensure a tmp dir for TTS
 		ttsDir := filepath.Join(os.TempDir(), "tts_audio")
 		if err := os.MkdirAll(ttsDir, 0o755); err != nil {
-			return nil, nil, "", fmt.Errorf("failed to create tts tmp dir: %v", err)
+			return nil, fmt.Errorf("failed to create tts tmp dir: %v", err)
 		}
 		filenames, fileoutputmap, err := rc.voiceService.GenerateSpeechToTmp(ttsInput, ttsDir)
 		if err != nil {
-			return nil, nil, "", fmt.Errorf("tts generation failed: %v", err)
+			return nil, fmt.Errorf("tts generation failed: %v", err)
 		}
 
 		ttsNarrationPathsMap = fileoutputmap
 		ttsNarrationPaths = filenames
 
+		// Add TTS files to cleanup list
+		for _, file := range fileoutputmap {
+			intermediateFiles = append(intermediateFiles, file)
+		}
 	}
 
 	// Resolve music if enabled
 	musicPath := ""
 	musicName := ""
 
-	if vc.Audio.Music.Enabled && &rc.bgMusic != nil {
+	if vc.Audio.Music.Enabled && rc.bgMusic != (BackgroundMusic{}) {
 		mf, err := rc.bgMusic.CreateBackgroundMusic(vc.Audio.Music.Mood, vc.Audio.Music.Genre)
 		if err != nil {
-			return nil, nil, "", fmt.Errorf("bgm download failed: %v", err)
+			return nil, fmt.Errorf("bgm download failed: %v", err)
 		}
 		musicPath = mf.FilePath
 		musicName = mf.FileName
+
+		// Add music file to cleanup list
+		intermediateFiles = append(intermediateFiles, mf.FilePath)
 	}
 
 	// Auto-generate an output path under the OS temp directory
 	autoOutput := filepath.Join(os.TempDir(), fmt.Sprintf("short_%d.mp4", time.Now().UnixNano()))
 
-	//seperate imps for pro and reels builders
-	args, err := rc.Build(in)
-
-	return args, ttsNarrationPaths, autoOutput, nil
+	// Execute FFmpeg and return video stream
+	return rc.Build(CommandBuildInput{
+		Metadata_FFmpeg: meta,
+		Timeline:        vc.Timeline,
+		ImagePaths:      InputImagePaths,
+		Audio: AudioConfig{
+			ttsNarrationPaths: ttsNarartionFiles{FilePath: ttsNarrationPathsMap, FileName: ttsNarrationPaths},
+			MusicEnabled:      vc.Audio.Music.Enabled,
+			MusicPath:         MusicFiles{MusicPath: musicPath, MusicName: musicName},
+			MusicVolume:       vc.Audio.Music.Volume,
+			NarrationVolume:   1.0,
+		},
+		OutputPath: autoOutput,
+	})
 }
 
-func (rc *ReelsCompiler) Build(in CommandBuildInput) ([]string, error) {
+// Compile implements VideoCompiler interface for ProCompiler
+// Pro-specific compilation: high quality, videos, professional processing
+func (pc *ProCompiler) Compile(jsonSchemaBlob []byte, InputImagePaths []string) (io.Reader, error) {
+	var proTimeline video_models.TimelineComposition
+	err := json.Unmarshal(jsonSchemaBlob, &proTimeline)
+	if err != nil {
+		return nil, fmt.Errorf("invalid composition json: %v. Given json: %s", err, string(jsonSchemaBlob))
+	}
+	// Track intermediate files for cleanup
+	var intermediateFiles []string
+
+	// Clean up intermediate files when function exits
+	defer func() {
+		for _, file := range intermediateFiles {
+			os.Remove(file)
+		}
+	}()
+
+	// TODO: Parse Pro-specific JSON schema
+	// TODO: Process videos for high-quality output
+	// TODO: Generate Pro-specific FFmpeg args (different codecs, quality settings)
+
+	// For now, delegate to ReelsCompiler logic but with Pro-specific optimizations
+	// This is a placeholder - implement Pro-specific logic here
+
+	return nil, fmt.Errorf("ProCompiler.Compile not yet implemented")
+}
+
+func (rc *ReelsCompiler) Build(in CommandBuildInput) (io.Reader, error) {
 	if in.Metadata_FFmpeg.Width <= 0 || in.Metadata_FFmpeg.Height <= 0 || in.Metadata_FFmpeg.FPS <= 0 {
 		return nil, fmt.Errorf("invalid metadata: width/height/fps must be > 0")
 	}
@@ -215,7 +278,7 @@ func (rc *ReelsCompiler) Build(in CommandBuildInput) ([]string, error) {
 	}
 
 	// Sort timeline by start time to build proper concat order
-	sorted := make([]video_ffmpeg.ImageSegment, len(in.Timeline.ImageTimeline.ImageSegments))
+	sorted := make([]video_models_reels_ffmpeg.ImageSegment, len(in.Timeline.ImageTimeline.ImageSegments))
 	copy(sorted, in.Timeline.ImageTimeline.ImageSegments)
 	sort.Slice(sorted, func(i, j int) bool { return sorted[i].StartTime < sorted[j].StartTime })
 
@@ -387,32 +450,30 @@ func (rc *ReelsCompiler) Build(in CommandBuildInput) ([]string, error) {
 		args = append(args, "-c:a", "aac")
 	}
 
-	// Ensure directory exists is caller's job; we only reference the path
-	args = append(args, filepath.Clean(in.OutputPath))
-	return args, nil
+	// Execute FFmpeg and return stdout as Reader
+	cmd := exec.Command("ffmpeg", args...)
+	cmd.Stderr = os.Stderr
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return nil, fmt.Errorf("failed to create stdout pipe: %v", err)
+	}
+
+	if err := cmd.Start(); err != nil {
+		return nil, fmt.Errorf("failed to start ffmpeg: %v", err)
+	}
+
+	// Return the stdout pipe as a Reader
+	return stdout, nil
 }
 
 // Reels Compiler and Compile both have
 // Compile implements VideoCompiler interface for ReelsCompiler
 
-// Compile implements VideoCompiler interface for ProCompiler
-// Pro-specific compilation: high quality, videos, professional processing
-func (pc *ProCompiler) Compile(jsonAISchemaBlob []byte, imagePaths []string) ([]string, []string, string, error) {
-	// Pro-specific schema processing
-	// TODO: Parse Pro-specific JSON schema
-	// TODO: Process videos for high-quality output
-	// TODO: Generate Pro-specific FFmpeg args (different codecs, quality settings)
-
-	// This actually does the building here
-	//seperate imps for pro and reels builders
-	args, err := pc.Build(in)
-
-	//this returns the stuff back
-	return args, nil, "", err
-}
-
-func (pc *ProCompiler) Build(in CommandBuildInput) ([]string, error) {
-	return pc.Build(in)
+func (pc *ProCompiler) Build(in CommandBuildInput) (io.Reader, error) {
+	// TODO: Implement Pro-specific FFmpeg args and execution
+	// For now, delegate to ReelsCompiler logic
+	reelsCompiler := &ReelsCompiler{}
+	return reelsCompiler.Build(in)
 }
 
 /*

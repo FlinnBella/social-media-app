@@ -1,0 +1,3 @@
+# Internal is a way to limit package scope to only certain files;
+I want to actually place the audio packages in here, so as 
+it cannot be used outside of being a helper to other functions
