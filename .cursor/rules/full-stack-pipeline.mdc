@@ -1,0 +1,51 @@
+---
+description: Full-stack invariants and data pipeline awareness across frontend and backend
+alwaysApply: false
+---
+## Full-Stack Awareness and Non‑Breaking Changes
+
+Always consider both frontend (`src/`) and backend (`backend/`) impacts when proposing or making changes. Maintain API compatibility, data-shape alignment, and the integrity of the image→timeline→video pipeline.
+
+### Core Pipeline (Do not break)
+1) Frontend triggers timeline generation and video creation via API request buttons:
+   - [GenerateTimelineButton.tsx](mdc:src/components/api-request-buttons/GenerateTimelineButton.tsx)
+   - [FFMpegRequestButton.tsx](mdc:src/components/api-request-buttons/FFMpegRequestButton.tsx)
+   - [VeoRequestButton.tsx](mdc:src/components/api-request-buttons/VeoRequestButton.tsx)
+
+2) Backend HTTP handling routes requests and orchestrates services:
+   - [handlers/video.go](mdc:backend/handlers/video.go)
+
+3) Images → Timeline: Backend calls N8N to transform generated images and metadata into a timeline structure:
+   - [services/n8nservice.go](mdc:backend/services/n8nservice.go)
+   - Timeline schema contract: [backend/schema/timeline_compostion.json](mdc:backend/schema/timeline_compostion.json)
+
+4) Timeline → Video: Backend uses Veo3 (Google) SDK/service to create a video from the timeline/images:
+   - [services/veo.go](mdc:backend/services/veo.go)
+   - Auxiliary composition/FFmpeg logic: [services/schema-to-ffmpeg-cmds.go](mdc:backend/services/schema-to-ffmpeg-cmds.go), [services/background_music.go](mdc:backend/services/background_music.go)
+
+### Contracts and Types (keep in sync)
+- Frontend timeline types must reflect backend schema:
+  - [src/types/timeline.ts](mdc:src/types/timeline.ts) ↔ [backend/schema/timeline_compostion.json](mdc:backend/schema/timeline_compostion.json)
+- Multipart/form and upload shapes must remain compatible with backend handlers and services:
+  - [src/types/multipart.ts](mdc:src/types/multipart.ts)
+  - [handlers/video.go](mdc:backend/handlers/video.go)
+
+### Invariants and Guidelines
+- Do not change endpoint paths, request/response shapes, or required fields without updating all callers and types across frontend and backend in the same edit.
+- Treat the timeline schema as the source of truth for the video composition flow; update both schema and TS types together.
+- Keep the feature-first structure for any new UI around this pipeline (see project feature structure rules). Co-locate feature-only components, hooks, and tests under `src/features/<feature>/`.
+- Ensure any data transformation remains pure and side-effect-free in React render paths; use hooks/effects appropriately.
+- When adding fields to the timeline or metadata, provide sensible defaults to preserve backward compatibility.
+- Validate and sanitize inputs at the backend boundary; surface clear errors to the frontend without leaking internals.
+
+### Quick References
+- Frontend entry for video UI: [src/components/VideoScreen/VideoContainer.tsx](mdc:src/components/VideoScreen/VideoContainer.tsx)
+- Timeline visualizer (keep in sync with schema):
+  - [timeline.tsx](mdc:src/components/VideoScreen/imagegenui/timeline-visualizer/timeline.tsx)
+  - [timelinecard.tsx](mdc:src/components/VideoScreen/imagegenui/timeline-visualizer/timelinecard.tsx)
+- Backend services and models touching composition:
+  - [backend/services/](mdc:backend/services/)
+  - [backend/models/](mdc:backend/models/)
+
+If a change risks breaking this flow, prefer additive, backward-compatible edits and update all referenced files in a single commit.
+

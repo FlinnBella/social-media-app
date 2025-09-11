@@ -80,8 +80,21 @@ func (vh *VideoHandler) GenerateVideoTimeline(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": fmt.Sprintf("failed to get timeline: %v", err)})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"status": "success", "data": resp.Body})
+	// Forward upstream status, headers, and JSON body directly to the client
 	defer resp.Body.Close()
+	for k, vals := range resp.Header {
+		for _, v := range vals {
+			c.Writer.Header().Add(k, v)
+		}
+	}
+	c.Status(resp.StatusCode)
+	// Ensure JSON content type for the browser
+	c.Writer.Header().Set("Content-Type", "application/json")
+	// Stream body as-is
+	if _, copyErr := io.Copy(c.Writer, resp.Body); copyErr != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": fmt.Sprintf("failed to stream response: %v", copyErr)})
+		return
+	}
 
 }
 

@@ -1,0 +1,81 @@
+---
+globs: src/**
+alwaysApply: false
+---
+# Feature-based structure and React style guide
+
+Adopt a feature-first folder structure. Co-locate everything that is exclusive to a feature (components, hooks, types, data, utils, tests) under that feature directory. Prefer functional React with Hooks; avoid class components.
+
+## Directory layout
+
+Place new features under `src/features/<feature-name>/` with co-located modules. Suggested scaffold:
+
+```
+src/features/<feature-name>/
+  components/           # feature-only components
+  hooks/                # feature-only hooks
+  types.ts              # feature-specific types/interfaces
+  utils.ts              # feature-specific helpers (optional)
+  data.ts               # feature-local constants/sample data (optional)
+  index.ts              # barrel exports (public API of the feature)
+  __tests__/            # co-located tests or *.test.ts(x)
+```
+
+- Shared, reusable UI elements go in `src/components/`.
+- Shared hooks go in `src/hooks/` only if used by multiple features.
+- Shared types go in `src/types/` only if used by multiple features.
+
+## Import conventions
+
+- Within a feature: use relative imports (`./`, `../`).
+- Across features or into shared code: use the alias root (`@/features/<feature>/...`).
+- Prefer importing via a feature `index.ts` barrel when exposing public APIs from a feature.
+
+## Assets
+
+- Static assets that should not be bundled (favicons, robots, static logos): place in root `public/` and reference with leading slash, e.g. `<img src="/logo.svg" />`.
+- Feature-specific assets that should be fingerprinted by the bundler: place under `src/features/<feature>/assets/` (or `src/assets/`) and import them:
+  ```ts
+  import hero from '@/features/<feature>/assets/hero.webp';
+  <img src={hero} alt="..." />
+  ```
+
+## React style
+
+- Use function components and Hooks exclusively; avoid class components.
+- Follow React purity rules:
+  - Do not mutate props, state, context, or arguments passed to Hooks.
+  - Keep side effects in `useEffect` (or relevant effect hooks), not during render.
+  - Treat values passed to JSX and Hooks as immutable snapshots for that render.
+- Follow Rules of Hooks: only call Hooks at the top level of React function components or custom Hooks.
+- Prefer named exports for components/hooks; avoid default exports for clearer refactors.
+
+## State and context
+
+- Keep state as close to where it’s used as practical.
+- If state is shared within a feature only, create a feature-local context under the feature directory (e.g., `context/` or in `hooks/`).
+- Only elevate to a global context in `src/context/` when truly cross-feature.
+
+## Testing
+
+- Co-locate tests with the feature (either `__tests__/` or `*.test.ts(x)` next to the file).
+
+## Example: feature scaffold snippet
+
+```
+src/features/prompt-templates/
+  components/
+    PromptTemplateCard.tsx
+    PromptTemplateContainer.tsx
+  hooks/
+    usePrompt.ts
+  types.ts
+  data.ts
+  index.ts
+```
+
+In usage:
+```ts
+import { PromptTemplateCard } from '@/features/prompt-templates';
+```
+

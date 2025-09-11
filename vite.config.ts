@@ -8,4 +8,16 @@ export default defineConfig({
   optimizeDeps: {
     exclude: ['lucide-react'],
   },
+  server: {
+    proxy: {
+      '/api': {
+        target: 'http://localhost:8080',
+        changeOrigin: true,
+        configure(proxy) {
+        proxy.on('proxyReq', (_proxyReq, req) => console.log('→', req.method, req.url));
+        proxy.on('proxyRes', (res, req) => console.log('←', res.statusCode, req.url));
+        },
+      },
+    },
+  }
 });

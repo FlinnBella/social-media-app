@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { toast } from "sonner";
 import { Upload, Camera } from "lucide-react";
 import { Textarea } from "@/components/ui/textarea";
@@ -10,15 +10,27 @@ import { useAutoResizeTextarea } from "@/hooks/use-auto-resize-textarea";
 import SocialSharePanel from "@/components/SocialSharePanel";
 // types imported where needed
 import VideoContainer from "@/components/VideoScreen/VideoContainer";
-import { FFMpegRequestButton } from "@/components/api-request-buttons/FFMpegRequestButton";
-import { VeoRequestButton } from "@/components/api-request-buttons/VeoRequestButton";
+// kept for buttons inside the composer zone
+// buttons are used inside Timeline, remove local imports to avoid unused warnings
 import { useSubmission } from "@/context/SubmissionContext";
 import { GenerateTimelineButton } from "@/components/api-request-buttons/GenerateTimelineButton";
+import { PROMPT_TYPES } from "@/features/prompt-templates/prompttypes";
+
+
+
+
+//types
+import type { Timeline as TimelineType } from "#types/timeline";
+import { usePrompt } from "./features/prompt-templates/usePrompt";
+// MakeTypeFieldsRequired not used in this file
+
+import { PromptTemplateContainer } from "./features/prompt-templates/PromptTemplateContainer";
+import { PromptCards, PromptCard } from "./features/prompt-templates/prompttypes";
 
 // Message type handled via SubmissionContext
 
 function App() {
-  const { isLoading, messages, timelineSegments } = useSubmission();
+  const { isLoading, messages, timeline } = useSubmission();
   const [inputText, setInputText] = useState("");
   const [selectedFiles, setSelectedFiles] = useState<File[]>([]);
   const [isMobile, setIsMobile] = useState(false);
@@ -93,6 +105,19 @@ function App() {
     }
   };
 
+
+ /*
+CALLBACKS START
+*/
+const onApplyNewPrompt = useCallback((prompt: string, promptType: keyof typeof PROMPT_TYPES) => {
+  prompt = inputText;
+  setInputText(`${usePrompt(prompt, promptType)}`);
+}, []);
+
+/*
+CALLBACKS END
+*/
+
   // submission handlers moved to SubmissionContext
 
   return (
@@ -104,18 +129,26 @@ function App() {
 
       <div className="flex flex-col items-center gap-8 w-full max-w-6xl">
         {/* Professional Video Display */}
+        {/* Images passed as file props into container; will allow us to interact with them in the children components */}
         <div className="relative mb-4">
           <VideoContainer
-            timelineSegments={timelineSegments}
+            timeline={timeline as TimelineType}
             videoUrl={
               messages.length > 0
                 ? messages[messages.length - 1].videoUrl
-                : null
+                : undefined
             }
             isMobile={isMobile}
             prompt={inputText}
             images={selectedFiles}
+            previewUrls={previewUrls}
           />
+        </div>
+
+
+        {/* Prompt Templates */}
+        <div>
+        <PromptTemplateContainer templates={PromptCards as PromptCard[]} prompt={inputText} onApply={onApplyNewPrompt} />
         </div>
 
         {/* AI Prompt Interface */}
@@ -240,25 +273,15 @@ function App() {
                       </label>
                     </div>
 
+                    {/* FFMpeg and Veo buttons now rendered in the timeline */}
                     <div className="flex items-center gap-2">
-                      {hasSubmittedTimeline ? (
-                        !isLoading ? (
-                          <div className="flex items-center gap-2">
-                            <FFMpegRequestButton
-                              prompt={inputText}
-                              images={selectedFiles}
-                            />
-                            <VeoRequestButton
-                              prompt={inputText}
-                              images={selectedFiles}
-                            />
-                          </div>
-                        ) : (
+                      {hasSubmittedTimeline ? 
+                         (
                           <div className="rounded-lg p-2 bg-black/5 dark:bg-white/5">
                             <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-500"></div>
                           </div>
                         )
-                      ) : (
+                       : (
                         <div className="flex items-center gap-2">
                           <GenerateTimelineButton
                             prompt={inputText}

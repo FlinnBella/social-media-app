@@ -81,7 +81,7 @@
           "items": {
             "type": "object",
             "required": ["ordering", "startTime", "duration", "imageIndex"],
-            "additionalProperties": false,
+            "additionalProperties": true,
             "properties": {
               "ordering": {
                 "type": "number",
@@ -208,31 +208,24 @@
     },
     "music": {
       "type": "object",
-      "required": ["music"],
+      "required": ["enabled"],
       "additionalProperties": false,
       "properties": {
-        "music": {
-          "type": "object",
-          "required": ["enabled"],
-          "additionalProperties": false,
-          "properties": {
-            "enabled": {
-              "type": "boolean"
-            },
-            "genre": {
-              "type": "string",
-              "enum": ["corporate", "upbeat", "realtor", "traditional"]
-            },
-            "volume": {
-              "type": "number",
-              "minimum": 0,
-              "maximum": 1,
-              "default": 0.3
-            }
-          },
-          "description": "Background music; fade-in/out handled by ffmpeg"
+        "enabled": {
+          "type": "boolean"
+        },
+        "genre": {
+          "type": "string",
+          "enum": ["corporate", "upbeat", "realtor", "traditional"]
+        },
+        "volume": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "default": 0.3
         }
-      }
+      },
+      "description": "Background music; fade-in/out handled by ffmpeg"
     }
   }
 }

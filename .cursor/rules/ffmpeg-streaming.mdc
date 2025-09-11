@@ -1,0 +1,73 @@
+---
+globs: backend/**/*.go
+description: FFmpeg flags and streaming strategies for low-latency output
+---
+
+## FFmpeg Streaming Strategies (low-latency, minimal memory)
+
+Two modes should co-exist:
+
+- Batch (current): write MP4 to temp, then `c.File` (supports Range/scrubbing). Keep as default for final downloads.
+- Live stream (add): pipe fragmented MP4 or HLS to client for fast first-frame.
+
+Fragmented MP4 over a single response:
+
+- Add flags for progressive streaming:
+  - `-movflags +frag_keyframe+empty_moov+faststart`
+  - `-f mp4 -`
+  - Keep GOP small for frequent keyframes: `-g 30 -keyint_min 30` for 30fps
+  - Lower B-frames for latency: `-bf 0` (consider quality tradeoffs)
+
+Example pipe pattern:
+
+```go
+args := []string{ /* inputs */,
+  "-c:v", "libx264",
+  "-preset", "fast",
+  "-crf", "23",
+  "-g", "30", "-keyint_min", "30", "-bf", "0",
+  "-movflags", "+frag_keyframe+empty_moov+faststart",
+  "-f", "mp4", "-",
+}
+cmd := exec.CommandContext(ctx, "ffmpeg", args...)
+stdout, _ := cmd.StdoutPipe()
+cmd.Stderr = os.Stderr
+cmd.Start()
+c.Header("Content-Type", "video/mp4")
+c.Writer.WriteHeaderNow()
+io.Copy(c.Writer, stdout)
+cmd.Wait()
+```
+
+HLS (HTTP Live Streaming):
+
+- Generates `.m3u8` and `.ts`/fMP4 segments under `./tmp/hls/<id>/` and serve via `r.Static("/static", "./tmp")` (already configured).
+- Flags:
+  - `-f hls -hls_time 2 -hls_list_size 10 -hls_flags delete_segments+append_list+independent_segments`
+  - For fMP4 segments: `-hls_segment_type fmp4`
+  - For VOD finalize: `-hls_flags single_file+independent_segments` (not for live)
+
+Example:
+
+```bash
+ffmpeg -i <inputs> -c:v libx264 -preset fast -crf 23 \
+  -g 30 -keyint_min 30 -bf 0 \
+  -f hls -hls_time 2 -hls_list_size 10 \
+  -hls_flags delete_segments+append_list+independent_segments \
+  /path/to/tmp/hls/<id>/index.m3u8
+```
+
+Serving:
+
+- Return the HLS playlist URL to the client: `/static/hls/<id>/index.m3u8`.
+- Frontend should use `<video src>` (for Safari) or `hls.js` for MSE on Chrome/Firefox.
+
+Progressive download (Range-enabled MP4):
+
+- Continue writing full MP4 to disk with `-movflags +faststart`. After completion, serve via `c.File` which supports Range.
+
+Diagnostics:
+
+- Capture `cmd.CombinedOutput()` on failure and log args for debugging.
+- Keep an env or config flag to switch between modes: `FFMPEG_STREAM_MODE=[pipe|hls|file]`.
+

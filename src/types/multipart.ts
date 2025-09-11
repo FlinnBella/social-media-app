@@ -1,10 +1,19 @@
+import { z } from "zod"
+
 export type MultiPartAction = 'SendImageTimeline' | 'imageTimeline' | 'finalVideo';
 
-
-export interface FinalVideoResponse {
-    ok: boolean;
-    error?: string;
-    videoUrl?: string;
+export type VideoRequest = {
+    formData: FormData;
+    apiPath: 'generateVideoReels' | 'generateVideoProReels';
 }
+
+
+export type VideoResponse = {
+    videoUrl: string;
+}
+
+export const ZVideoResponseUniversal = z.object({
+    videoUrl: z.string(),
+});
 
 

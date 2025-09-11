@@ -1,21 +1,31 @@
-import React from 'react';
+import React, { useCallback, useState } from 'react';
 import { Monitor, Smartphone } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import type { ImageSegment, TextSegment } from '#types/timeline';
+import type { Timeline as TimelineType } from '#types/timeline';
 import { Timeline } from '@/components/VideoScreen/imagegenui/timeline-visualizer/timeline';
+import { useSubmission } from '@/context/SubmissionContext';
+import type { VideoResponse } from '#types/multipart';
 // removed unused types
 
-interface VideoContainerProps {
-    timelineSegments: ImageSegment[] | null;
-    videoUrl?: string | null;
+interface TimelineVideoContainerProps {
+    timeline: TimelineType | null;
     isMobile: boolean;
     prompt?: string;
-    images?: File[];
+    images: File[];
+    previewUrls: string[];
 }
 
-export const VideoContainer: React.FC<VideoContainerProps> = ({ timelineSegments, videoUrl, isMobile, prompt, images }) => {
+//Partial here as a workaround to signify 
+//that the videourl is serpate form the timeline props
+interface RenderVideoProps {
+    videoUrl: string;
+}
+
+type Props = TimelineVideoContainerProps & Partial<RenderVideoProps>;
+
+export const VideoContainer: React.FC<Props> = ({ timeline, isMobile, prompt, images, previewUrls } : Props) => {
+    const { video, requestVideo } = useSubmission();
     //shoudl be binary being streamed to the client; 
-    //need to convert it to a blob url for the src to render
     return (
         <div className={cn(
             "bg-gray-900 rounded-2xl p-4 shadow-2xl",
@@ -26,15 +36,21 @@ export const VideoContainer: React.FC<VideoContainerProps> = ({ timelineSegments
                 isMobile ? "aspect-[9/16] max-h-[600px]" : "aspect-video h-[400px]"
             )}>
                 <div className="w-full h-full flex items-center justify-center bg-gray-900">
-                    {timelineSegments ? (
+
+                    {/* Complex Check; perhaps just put the isVideo instead */}
+                    {/* As a state type, to pass it on anyways */}
+                    {/* As Javascript will eval null or truthy*/}
+                    {(timeline && !video) ? (
                         <Timeline 
-                            ImageSegments={timelineSegments}
+                            ImageSegments={timeline.ImageTimeline}
+                            TextSegments={timeline.TextTimeline.TextSegments}
                             prompt={prompt}
                             images={images}
+                            previewUrls={previewUrls}
                         />
-                    ) : videoUrl ? (
+                    ) : (video && video.videoUrl) ? (
                         <video
-                            src={videoUrl}
+                            src={video.videoUrl}
                             controls
                             className="w-full h-full object-cover rounded-xl"
                             autoPlay

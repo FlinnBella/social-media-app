@@ -1,0 +1,99 @@
+---
+globs: backend/**/*.go
+description: Concurrency, streaming, and memory-safety patterns for Go backend
+---
+
+## Backend Concurrency and Low-Memory Streaming (Go + Gin + ffmpeg)
+
+Context-aware notes for this repo (handlers, services, models):
+
+- GenerateVideoReels currently buffers multipart to disk and runs `ffmpeg` synchronously, then serves a completed file via `c.File(outputPath)`. This is robust and supports HTTP Range, but it is not low-latency. Consider a streaming path alongside the batch path.
+- VeoService reads a single image and prompt, polls until done, then returns full `[]byte` MP4. This is memory-heavy for large outputs. Prefer streaming download to the client via io.Copy when possible.
+- N8NService proxies multipart to n8n; ensure we keep bodies as streams where possible to minimize copies.
+
+Recommended patterns:
+
+- Prefer io.Copy with bounded buffers between producers and `c.Writer` to avoid buffering large payloads in RAM.
+- For CPU-bound parallel work (e.g., TTS, background music fetch), use goroutines with `errgroup.Group` and context cancellation.
+- For rate-limited/IO work (n8n, TTS, music), bound concurrency with a sized semaphore (chan struct{} or a worker pool).
+
+Implementation guidance:
+
+1) Stream ffmpeg output progressively (fragmented MP4)
+
+- Build ffmpeg with flags that produce streamable MP4:
+  - `-movflags +frag_keyframe+empty_moov+faststart` (for progressive MP4)
+  - Or produce fMP4/HLS/DASH for best streaming behavior
+- Use a pipe to capture stdout and write to the response:
+
+```go
+cmd := exec.CommandContext(c.Request.Context(), "ffmpeg", append(args, "-f", "mp4", "-")...)
+stdout, _ := cmd.StdoutPipe()
+cmd.Stderr = os.Stderr
+if err := cmd.Start(); err != nil { /* handle */ }
+c.Header("Content-Type", "video/mp4")
+c.Status(http.StatusOK)
+buf := make([]byte, 64*1024)
+if _, err := io.CopyBuffer(c.Writer, stdout, buf); err != nil { /* handle */ }
+cmd.Wait()
+```
+
+- Keep existing `c.File(outputPath)` path for Range support; add a query flag (e.g., `?stream=1`) to choose the streaming path.
+
+2) Stream Veo downloads to client
+
+- If the SDK supports ranged or chunked download, stream directly:
+
+```go
+rc, size, mime := client.Files.DownloadStream(ctx, video.Video)
+defer rc.Close()
+c.Header("Content-Type", mime)
+c.Status(http.StatusOK)
+io.Copy(c.Writer, rc)
+```
+
+- If only `VideoBytes` is available, avoid keeping full bytes when relaying to the client. Use an `io.Reader` and `io.Copy` rather than `c.Data`.
+
+3) Parallelize audio asset preparation in CompositionCompiler
+
+- Run ElevenLabs TTS generation and background music fetch in parallel using `errgroup`:
+
+```go
+g, ctx := errgroup.WithContext(context.Background())
+g.Go(func() error { /* TTS */; return nil })
+g.Go(func() error { /* BGM */; return nil })
+if err := g.Wait(); err != nil { return nil, nil, "", err }
+```
+
+4) Limit concurrency for large multipart uploads
+
+- When writing uploaded images to disk, use `io.CopyBuffer` with a shared buffer pool (sync.Pool) and process files sequentially or with small concurrency to cap memory.
+
+```go
+var bufPool = sync.Pool{New: func() any { return make([]byte, 64*1024) }}
+// per file
+buf := bufPool.Get().([]byte)
+defer bufPool.Put(buf)
+io.CopyBuffer(dst, src, buf)
+```
+
+5) Cancellation and timeouts
+
+- Prefer `exec.CommandContext` with the request context; ensure goroutines also observe `ctx.Done()` and bail early.
+
+6) Response flushing
+
+- For long-running streaming, call `c.Writer.WriteHeaderNow()` then periodically `c.Writer.Flush()` (ensure writer supports `http.Flusher`). SSE already sets proper headers; do similar for video when chunking.
+
+7) Error propagation
+
+- Use `errgroup` for multi-step orchestration, and return early on first error. Clean up tmp files with `defer os.Remove`.
+
+8) Range support vs live streaming
+
+- Keep the file-based finish path for scrubbing support. Offer a live-stream path optimized for low-latency preview; optionally save a copy concurrently (tee) using `io.TeeReader` into a temp file.
+
+9) Memory avoidance
+
+- Do not accumulate full bodies in `[]byte` unless unavoidable. Prefer readers, pipes, and `io.Copy`.
+

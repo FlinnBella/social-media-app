@@ -1,0 +1,42 @@
+---
+globs: src/**/*.{ts,tsx}
+description: Frontend video playback for streaming (HLS, progressive MP4), minimal memory
+---
+
+## Frontend Streaming Integration (React)
+
+Current:
+
+- `VideoContainer` renders either a timeline preview or a `<video src={videoUrl}>` with controls, autoplay, loop. Static MP4 works today.
+
+Recommendations:
+
+- If backend adds HLS output, prefer using `hls.js` for MSE playback on browsers without native HLS:
+
+```ts
+// pseudo usage
+import Hls from 'hls.js';
+const setupVideo = (video: HTMLVideoElement, src: string) => {
+  if (Hls.isSupported()) {
+    const hls = new Hls({ enableWorker: true, lowLatencyMode: true });
+    hls.loadSource(src);
+    hls.attachMedia(video);
+  } else {
+    video.src = src; // Safari/iOS
+  }
+}
+```
+
+- For progressive MP4 pipe, keep `<video src>` as-is. Ensure server sets `Content-Type: video/mp4` and writes data continuously.
+- Preserve Range support for completed downloads (existing `c.File`). The same `<video>` tag will handle scrubbing.
+
+Networking:
+
+- Use `fetch` only for control APIs. Do not pre-buffer the video bytes in the app; let the `<video>` element stream.
+- For authenticated requests, prefer query or headers and allow `<video src>` to include credentials if needed. Avoid blob URLs for large videos to prevent memory spikes.
+
+UX:
+
+- Show a skeleton or spinner until metadata is loaded (`onLoadedMetadata`), then show controls.
+- Consider a toggle: “Preview low-latency” (stream) vs “Download high quality” (file with Range).
+

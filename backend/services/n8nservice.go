@@ -2,7 +2,9 @@ package services
 
 import (
 	"fmt"
+	"mime"
 	"net/http"
+	"time"
 
 	"social-media-ai-video/config"
 
@@ -29,9 +31,11 @@ func (ns *N8NService) Get(c *gin.Context, targetURL string) (*http.Response, err
 	//Eventually should just guard for everthing in the service here
 	case ns.cfg.N8BTIMELINEURL:
 
-		client := &http.Client{}
+		client := &http.Client{
+			Timeout: 30 * time.Second,
+		}
 
-		n8nReq, err := http.NewRequest("POST", targetURL, c.Request.Body)
+		n8nReq, err := http.NewRequestWithContext(c.Request.Context(), "POST", targetURL, c.Request.Body)
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": fmt.Sprintf("failed to create request: %v", err)})
 			return nil, err
@@ -44,11 +48,20 @@ func (ns *N8NService) Get(c *gin.Context, targetURL string) (*http.Response, err
 			c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": fmt.Sprintf("failed to send request: %v", err)})
 			return nil, err
 		}
-		//Guards
-		if resp.Header.Get("Content-Type") != "application/json" {
+
+		if resp == nil || resp.ContentLength == 0 {
+			c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": "No content returned"})
+			return nil, fmt.Errorf("no content returned")
+		}
+
+		//Response guard
+		ct := resp.Header.Get("Content-Type")
+		mediaType, _, _ := mime.ParseMediaType(ct)
+		if mediaType != "application/json" {
 			c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": "Content-Type must be application/json"})
 			return nil, fmt.Errorf("unexpected content type: %s", resp.Header.Get("Content-Type"))
 		}
+		//GUARDS END
 
 		return resp, nil
 
