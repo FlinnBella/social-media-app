@@ -35,17 +35,13 @@ func NewVideoHandler(cfg *config.APIConfig) *VideoHandler {
 	bgMusic := services.NewBackgroundMusic(cfg)
 	elevenLabs := services.NewElevenLabsService(cfg)
 
-	// Create different builders for different compilers
-	reelsBuilder := services.NewReelsBuilder()
-	proBuilder := services.NewProBuilder()
-
 	return &VideoHandler{
 		//api's
 		cfg: cfg,
 
 		// Compilers with their own builders and shared services
-		reelsCompiler: services.NewReelsCompiler(reelsBuilder, bgMusic, elevenLabs),
-		proCompiler:   services.NewProCompiler(proBuilder, bgMusic, elevenLabs),
+		reelsCompiler: services.NewReelsCompiler(bgMusic, elevenLabs),
+		proCompiler:   services.NewProCompiler(bgMusic, elevenLabs),
 
 		//Actually used to generate schema; should
 		//eventually pass it n8n service as a method,

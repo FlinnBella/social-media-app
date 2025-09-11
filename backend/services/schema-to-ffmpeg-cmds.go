@@ -55,7 +55,10 @@ type MusicFiles struct {
 	MusicName string
 }
 
-type Metadata_FFmpeg struct {
+//AudioConfig end
+
+// ffmpeg
+type Metadata_Universal_FFmpeg struct {
 	TotalDuration int
 	AspectRatio   string
 	FPS           int
@@ -66,7 +69,7 @@ type Metadata_FFmpeg struct {
 // CommandBuildInput contains everything needed to construct ffmpeg args
 
 type CommandBuildInput struct {
-	Metadata_FFmpeg Metadata_FFmpeg
+	Metadata_FFmpeg Metadata_Universal_FFmpeg
 	Timeline        video_ffmpeg.Timeline
 	// Images referenced by index in timeline (ImageIndex)
 	ImagePaths []string
@@ -76,86 +79,36 @@ type CommandBuildInput struct {
 	OutputPath string
 }
 
-// FFmpegBuilder defines the interface for FFmpeg command generation
-type FFmpegBuilder interface {
+// VideoCompiler defines the interface for video compilation strategies
+type VideoCompiler interface {
+	Compile(jsonAISchemaBlob []byte, imagePaths []string) ([]string, []string, string, error)
 	Build(in CommandBuildInput) ([]string, error)
-}
-
-// FFmpegCommandBuilder converts a high-level composition into a single ffmpeg command
-type FFmpegCommandBuilder struct{}
-
-func NewFFmpegCommandBuilder() *FFmpegCommandBuilder { return &FFmpegCommandBuilder{} }
-
-// ReelsBuilder - optimized for images + social media
-type ReelsBuilder struct {
-	*FFmpegCommandBuilder
-}
-
-func NewReelsBuilder() *ReelsBuilder {
-	return &ReelsBuilder{FFmpegCommandBuilder: NewFFmpegCommandBuilder()}
-}
-
-// ProBuilder - optimized for videos + high quality
-type ProBuilder struct {
-	*FFmpegCommandBuilder
-}
-
-func NewProBuilder() *ProBuilder {
-	return &ProBuilder{FFmpegCommandBuilder: NewFFmpegCommandBuilder()}
-}
-
-// BackgroundMusicProvider defines the minimal behavior needed for background music resolution
-type BackgroundMusicProvider interface {
-	CreateBackgroundMusic(mood string, genre string) (*MusicFile, error)
-}
-
-// TTSProvider defines the minimal behavior needed for TTS asset generation
-type TTSProvider interface {
-	GenerateSpeechToTmp(input models.TTSInput, tmpDir string) (filenames []string, fileoutputmap map[string]string, err error)
 }
 
 //Compiler structs
 
 // ReelsCompiler - standard video compilation for social media reels
 type ReelsCompiler struct {
-	builder      FFmpegBuilder
-	bgMusic      BackgroundMusicProvider
-	voiceService TTSProvider
+	bgMusic      BackgroundMusic
+	voiceService ElevenLabsService
 }
 
-func NewReelsCompiler(builder FFmpegBuilder, bg BackgroundMusicProvider, els TTSProvider) *ReelsCompiler {
-	return &ReelsCompiler{builder: builder, bgMusic: bg, voiceService: els}
+func NewReelsCompiler(bg *BackgroundMusic, els *ElevenLabsService) *ReelsCompiler {
+	return &ReelsCompiler{bgMusic: *bg, voiceService: *els}
 }
 
 // ProCompiler - high-quality video compilation with different ffmpeg strategy
 type ProCompiler struct {
-	builder      FFmpegBuilder
-	bgMusic      BackgroundMusicProvider
-	voiceService TTSProvider
+	bgMusic      BackgroundMusic
+	voiceService ElevenLabsService
 }
 
-func NewProCompiler(builder FFmpegBuilder, bg BackgroundMusicProvider, els TTSProvider) *ProCompiler {
-	return &ProCompiler{builder: builder, bgMusic: bg, voiceService: els}
-}
-
-// Legacy CompositionCompiler for backward compatibility
-type CompositionCompiler struct {
-	builder      *FFmpegCommandBuilder
-	bgMusic      BackgroundMusicProvider
-	voiceService TTSProvider
-}
-
-func NewCompositionCompiler(builder *FFmpegCommandBuilder, bg BackgroundMusicProvider, els TTSProvider) *CompositionCompiler {
-	return &CompositionCompiler{builder: builder, bgMusic: bg, voiceService: els}
-}
-
-// VideoCompiler defines the interface for video compilation strategies
-type VideoCompiler interface {
-	Compile(jsonAISchemaBlob []byte, imagePaths []string) ([]string, []string, string, error)
+func NewProCompiler(bg *BackgroundMusic, els *ElevenLabsService) *ProCompiler {
+	return &ProCompiler{bgMusic: *bg, voiceService: *els}
 }
 
 // Compile takes the AI JSON blob and image paths (ordered by index) and returns ffmpeg args and resolved output paths used.
-func (cc *CompositionCompiler) Compile(jsonAISchemaBlob []byte, imagePaths []string) ([]string, []string, string, error) {
+func (rc *ReelsCompiler) Compile(jsonAISchemaBlob []byte, imagePaths []string) ([]string, []string, string, error) {
 	//schema object
 	var vc video_ffmpeg.VideoCompositionResponse
 
@@ -182,7 +135,7 @@ func (cc *CompositionCompiler) Compile(jsonAISchemaBlob []byte, imagePaths []str
 			fps = parsed
 		}
 	}
-	meta := Metadata_FFmpeg{
+	meta := Metadata_Universal_FFmpeg{
 		TotalDuration: vc.Metadata.TotalDuration,
 		AspectRatio:   vc.Metadata.AspectRatio,
 		FPS:           fps,
@@ -200,13 +153,13 @@ func (cc *CompositionCompiler) Compile(jsonAISchemaBlob []byte, imagePaths []str
 	ttsNarrationPaths := []string{}
 
 	//Generate tts narration elevenlabs
-	if cc.voiceService != nil {
+	if &rc.voiceService != nil {
 		// Ensure a tmp dir for TTS
 		ttsDir := filepath.Join(os.TempDir(), "tts_audio")
 		if err := os.MkdirAll(ttsDir, 0o755); err != nil {
 			return nil, nil, "", fmt.Errorf("failed to create tts tmp dir: %v", err)
 		}
-		filenames, fileoutputmap, err := cc.voiceService.GenerateSpeechToTmp(ttsInput, ttsDir)
+		filenames, fileoutputmap, err := rc.voiceService.GenerateSpeechToTmp(ttsInput, ttsDir)
 		if err != nil {
 			return nil, nil, "", fmt.Errorf("tts generation failed: %v", err)
 		}
@@ -220,8 +173,8 @@ func (cc *CompositionCompiler) Compile(jsonAISchemaBlob []byte, imagePaths []str
 	musicPath := ""
 	musicName := ""
 
-	if vc.Audio.Music.Enabled && cc.bgMusic != nil {
-		mf, err := cc.bgMusic.CreateBackgroundMusic(vc.Audio.Music.Mood, vc.Audio.Music.Genre)
+	if vc.Audio.Music.Enabled && &rc.bgMusic != nil {
+		mf, err := rc.bgMusic.CreateBackgroundMusic(vc.Audio.Music.Mood, vc.Audio.Music.Genre)
 		if err != nil {
 			return nil, nil, "", fmt.Errorf("bgm download failed: %v", err)
 		}
@@ -232,61 +185,13 @@ func (cc *CompositionCompiler) Compile(jsonAISchemaBlob []byte, imagePaths []str
 	// Auto-generate an output path under the OS temp directory
 	autoOutput := filepath.Join(os.TempDir(), fmt.Sprintf("short_%d.mp4", time.Now().UnixNano()))
 
-	args, err := cc.builder.Build(CommandBuildInput{
-		Metadata_FFmpeg: meta,
-		Timeline:        vc.Timeline,
-		ImagePaths:      imagePaths,
-		Audio: AudioConfig{
-			ttsNarrationPaths: ttsNarartionFiles{FilePath: ttsNarrationPathsMap, FileName: ttsNarrationPaths},
-			MusicEnabled:      vc.Audio.Music.Enabled,
-			MusicPath:         MusicFiles{MusicPath: musicPath, MusicName: musicName},
-			MusicVolume:       vc.Audio.Music.Volume,
-			NarrationVolume:   1.0,
-		},
-		OutputPath: autoOutput,
-	})
-	if err != nil {
-		return nil, []string{}, "", err
-	}
+	//seperate imps for pro and reels builders
+	args, err := rc.Build(in)
+
 	return args, ttsNarrationPaths, autoOutput, nil
 }
 
-// Reels Compiler and Compile both have
-// Compile implements VideoCompiler interface for ReelsCompiler
-// Reels-specific compilation: optimized for social media, images, fast processing
-func (rc *ReelsCompiler) Compile(jsonAISchemaBlob []byte, imagePaths []string) ([]string, []string, string, error) {
-	// Reels-specific schema processing
-	// TODO: Parse Reels-specific JSON schema
-	// TODO: Process images for social media optimization
-	// TODO: Generate Reels-specific FFmpeg args
-
-	// For now, delegate to existing logic but with Reels builder
-	cc := &CompositionCompiler{
-		builder:      rc.builder.(*FFmpegCommandBuilder), // Cast to concrete type for now
-		bgMusic:      rc.bgMusic,
-		voiceService: rc.voiceService,
-	}
-	return cc.Compile(jsonAISchemaBlob, imagePaths)
-}
-
-// Compile implements VideoCompiler interface for ProCompiler
-// Pro-specific compilation: high quality, videos, professional processing
-func (pc *ProCompiler) Compile(jsonAISchemaBlob []byte, imagePaths []string) ([]string, []string, string, error) {
-	// Pro-specific schema processing
-	// TODO: Parse Pro-specific JSON schema
-	// TODO: Process videos for high-quality output
-	// TODO: Generate Pro-specific FFmpeg args (different codecs, quality settings)
-
-	// For now, delegate to existing logic but with Pro builder
-	cc := &CompositionCompiler{
-		builder:      pc.builder.(*FFmpegCommandBuilder), // Cast to concrete type for now
-		bgMusic:      pc.bgMusic,
-		voiceService: pc.voiceService,
-	}
-	return cc.Compile(jsonAISchemaBlob, imagePaths)
-}
-
-func (b *FFmpegCommandBuilder) Build(in CommandBuildInput) ([]string, error) {
+func (rc *ReelsCompiler) Build(in CommandBuildInput) ([]string, error) {
 	if in.Metadata_FFmpeg.Width <= 0 || in.Metadata_FFmpeg.Height <= 0 || in.Metadata_FFmpeg.FPS <= 0 {
 		return nil, fmt.Errorf("invalid metadata: width/height/fps must be > 0")
 	}
@@ -487,13 +392,32 @@ func (b *FFmpegCommandBuilder) Build(in CommandBuildInput) ([]string, error) {
 	return args, nil
 }
 
+// Reels Compiler and Compile both have
+// Compile implements VideoCompiler interface for ReelsCompiler
+
+// Compile implements VideoCompiler interface for ProCompiler
+// Pro-specific compilation: high quality, videos, professional processing
+func (pc *ProCompiler) Compile(jsonAISchemaBlob []byte, imagePaths []string) ([]string, []string, string, error) {
+	// Pro-specific schema processing
+	// TODO: Parse Pro-specific JSON schema
+	// TODO: Process videos for high-quality output
+	// TODO: Generate Pro-specific FFmpeg args (different codecs, quality settings)
+
+	// This actually does the building here
+	//seperate imps for pro and reels builders
+	args, err := pc.Build(in)
+
+	//this returns the stuff back
+	return args, nil, "", err
+}
+
+func (pc *ProCompiler) Build(in CommandBuildInput) ([]string, error) {
+	return pc.Build(in)
+}
+
 /*
-
 FFMPEG HELPER FUNCTIONS
-
-
 */
-
 func clamp01(v float64) float64 {
 	if v < 0 {
 		return 0
