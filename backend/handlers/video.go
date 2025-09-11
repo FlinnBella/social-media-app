@@ -24,9 +24,9 @@ type VideoHandler struct {
 	reelsCompiler services.VideoCompiler
 	proCompiler   services.VideoCompiler
 	// Services used directly by handlers (not through compilers)
-	contentGenerator *services.ContentGenerator
-	N8NService       *services.N8NService
-	veo              *services.VeoService
+
+	N8NService *services.N8NService
+	veo        *services.VeoService
 }
 
 func NewVideoHandler(cfg *config.APIConfig) *VideoHandler {
@@ -45,7 +45,6 @@ func NewVideoHandler(cfg *config.APIConfig) *VideoHandler {
 		//Actually used to generate schema; should
 		//eventually pass it n8n service as a method,
 		//as it invokes n8n under the hood
-		contentGenerator: services.NewContentGenerator(cfg),
 
 		//n8n service to get the JSON, make network requests
 		N8NService: services.NewN8NService(cfg),
@@ -398,12 +397,8 @@ func (vh *VideoHandler) GenerateVideoPexels(c *gin.Context) {
 		vr.Images = append(vr.Images, b)
 		vr.ImageNames = append(vr.ImageNames, fh.Filename)
 	}
-
-	resp, svcErr := vh.contentGenerator.GenerateVideoSchemaMultipart(vr)
-	if svcErr != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": svcErr.Error()})
-		return
-	}
-
-	c.JSON(http.StatusOK, resp)
+	/*
+	   Pexels here needs to just upload it to the docker container for the ai-shorts-maker; nothing else
+	*/
+	//c.JSON(http.StatusOK, resp)
 }
