@@ -26,6 +26,8 @@ import { useUserState } from "@/context/UserContext";
 
 import { PromptTemplateContainer } from "./features/prompt-templates/PromptTemplateContainer";
 import { PromptCards, PromptCard } from "./features/prompt-templates/prompttypes";
+import { VideoProgressBar } from "./features/video-progress";
+import { useVideoProgress } from "./hooks/useVideoProgress";
 
 // Message type handled via SubmissionContext
 
@@ -38,6 +40,9 @@ function App() {
   // removed unused pendingApproval state
 
   const [hasSubmittedTimeline, setHasSubmittedTimeline] = useState(false);
+  
+  // Video progress hook for SSE
+  const videoProgress = useVideoProgress();
 
   const { textareaRef, adjustHeight } = useAutoResizeTextarea({
     minHeight: 72,
@@ -256,16 +261,12 @@ CALLBACKS END
             </div>
           </div>
 
-          {isLoading && (
-            <div className="mt-3 p-3 bg-blue-50 dark:bg-blue-900/20 rounded-lg">
-              <div className="flex items-center space-x-2">
-                <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-500"></div>
-                <p className="text-sm text-blue-700 dark:text-blue-300 font-ibm">
-                  Generating your property video...
-                </p>
-              </div>
-            </div>
-          )}
+          {/* Video Progress Bar */}
+          <VideoProgressBar
+            progress={videoProgress.progress}
+            error={videoProgress.error}
+            isVisible={videoProgress.isVisible || isLoading}
+          />
         </div>
 
         {/* Social Media Links - Show after video generation */}

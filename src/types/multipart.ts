@@ -5,6 +5,7 @@ export type MultiPartAction = 'SendImageTimeline' | 'imageTimeline' | 'finalVide
 export type VideoRequest = {
     formData: FormData;
     apiKey: 'generateVideoReels' | 'generateVideoProReels';
+    clientId?: string;
 }
 
 

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"sync"
 	"time"
 
 	"net/http"
@@ -27,6 +28,10 @@ type VideoHandler struct {
 
 	N8NService *services.N8NService
 	veo        *services.VeoService
+
+	// SSE client management
+	clients      map[string]chan gin.H
+	clientsMutex sync.RWMutex
 }
 
 func NewVideoHandler(cfg *config.APIConfig) *VideoHandler {
@@ -51,6 +56,9 @@ func NewVideoHandler(cfg *config.APIConfig) *VideoHandler {
 
 		//veo to geenrate videos, fed into compilier
 		veo: services.NewVeoService(cfg),
+
+		// Initialize SSE client management
+		clients: make(map[string]chan gin.H),
 	}
 }
 
@@ -285,12 +293,40 @@ func (vh *VideoHandler) GenerateVideoReels(c *gin.Context) {
 	}
 	schema := schemaValues[0]
 
+	// Get client ID for SSE updates (optional)
+	clientID := c.Query("client_id")
+
+	// Send progress update if client is connected
+	if clientID != "" {
+		vh.SendToClient(clientID, "video_progress", gin.H{
+			"stage":    "compiling",
+			"message":  "Starting video compilation...",
+			"progress": 10,
+		})
+	}
+
 	// Compile with AI schema blob and local image paths using reels compiler
 	// Compiler handles its own intermediate file cleanup and FFmpeg execution
 	videoStream, err := vh.reelsCompiler.Compile([]byte(schema), localImagePaths)
 	if err != nil {
+		// Send error update if client is connected
+		if clientID != "" {
+			vh.SendToClient(clientID, "video_error", gin.H{
+				"error": err.Error(),
+				"stage": "compilation_failed",
+			})
+		}
 		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": err.Error()})
 		return
+	}
+
+	// Send progress update if client is connected
+	if clientID != "" {
+		vh.SendToClient(clientID, "video_progress", gin.H{
+			"stage":    "streaming",
+			"message":  "Video compilation complete, streaming to client...",
+			"progress": 90,
+		})
 	}
 
 	// Clean up uploaded images after streaming
@@ -305,6 +341,13 @@ func (vh *VideoHandler) GenerateVideoReels(c *gin.Context) {
 	c.Header("Cache-Control", "no-cache")
 
 	if _, err := io.Copy(c.Writer, videoStream); err != nil {
+		// Send error update if client is connected
+		if clientID != "" {
+			vh.SendToClient(clientID, "video_error", gin.H{
+				"error": fmt.Sprintf("failed to stream video: %v", err),
+				"stage": "streaming_failed",
+			})
+		}
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"status": "error",
 			"error":  fmt.Sprintf("failed to stream video: %v", err),
@@ -312,23 +355,103 @@ func (vh *VideoHandler) GenerateVideoReels(c *gin.Context) {
 		return
 	}
 
+	// Send completion update if client is connected
+	if clientID != "" {
+		vh.SendToClient(clientID, "video_progress", gin.H{
+			"stage":    "completed",
+			"message":  "Video generation completed successfully!",
+			"progress": 100,
+		})
+	}
+
+}
+
+// AddClient adds a new SSE client and returns a unique client ID
+func (vh *VideoHandler) AddClient() (string, chan gin.H) {
+	clientID := fmt.Sprintf("client_%d", time.Now().UnixNano())
+	clientChan := make(chan gin.H, 10) // Buffered channel for non-blocking sends
+
+	vh.clientsMutex.Lock()
+	vh.clients[clientID] = clientChan
+	vh.clientsMutex.Unlock()
+
+	return clientID, clientChan
+}
+
+// RemoveClient removes a client from the SSE client list
+func (vh *VideoHandler) RemoveClient(clientID string) {
+	vh.clientsMutex.Lock()
+	if clientChan, exists := vh.clients[clientID]; exists {
+		close(clientChan)
+		delete(vh.clients, clientID)
+	}
+	vh.clientsMutex.Unlock()
+}
+
+// SendToClient sends a message to a specific client
+func (vh *VideoHandler) SendToClient(clientID string, eventType string, data gin.H) {
+	vh.clientsMutex.RLock()
+	clientChan, exists := vh.clients[clientID]
+	vh.clientsMutex.RUnlock()
+
+	if exists {
+		select {
+		case clientChan <- gin.H{"type": eventType, "data": data}:
+			// Message sent successfully
+		default:
+			// Channel is full, client might be slow or disconnected
+			// Could log this or implement backpressure handling
+		}
+	}
+}
+
+// SendToAllClients broadcasts a message to all connected clients
+func (vh *VideoHandler) SendToAllClients(eventType string, data gin.H) {
+	vh.clientsMutex.RLock()
+	defer vh.clientsMutex.RUnlock()
+
+	message := gin.H{"type": eventType, "data": data}
+	for clientID, clientChan := range vh.clients {
+		select {
+		case clientChan <- message:
+			// Message sent successfully
+		default:
+			// Channel is full, skip this client
+			// Could remove the client here if it's consistently slow
+		}
+	}
 }
 
 /*
 SSEStream to send small, event based updates to the client
+Now supports client-specific messaging via client ID parameter
 */
 func (vh *VideoHandler) SSEStream(c *gin.Context) {
+	// Get or generate client ID
+	clientID := c.Query("client_id")
+	if clientID == "" {
+		clientID = fmt.Sprintf("client_%d", time.Now().UnixNano())
+	}
+
 	c.Header("Content-Type", "text/event-stream")
 	c.Header("Cache-Control", "no-cache")
 	c.Header("Connection", "keep-alive")
 	c.Header("Access-Control-Allow-Origin", "*")
 
-	// Send initial connection event
-	c.SSEvent("connected", gin.H{"status": "connected"})
+	// Add this client to our client list
+	generatedClientID, clientChan := vh.AddClient()
+	defer vh.RemoveClient(generatedClientID)
+
+	// Send initial connection event with client ID
+	c.SSEvent("connected", gin.H{
+		"status":    "connected",
+		"client_id": clientID,
+		"timestamp": time.Now().Unix(),
+	})
 	c.Writer.Flush()
 
-	// Keep connection alive and send periodic updates
-	ticker := time.NewTicker(1 * time.Second)
+	// Keep connection alive and send client-specific updates
+	ticker := time.NewTicker(30 * time.Second) // Less frequent heartbeat
 	defer ticker.Stop()
 
 	for {
@@ -338,7 +461,16 @@ func (vh *VideoHandler) SSEStream(c *gin.Context) {
 			return
 		case <-ticker.C:
 			// Send heartbeat
-			c.SSEvent("heartbeat", gin.H{"timestamp": time.Now().Unix()})
+			c.SSEvent("heartbeat", gin.H{
+				"timestamp": time.Now().Unix(),
+				"client_id": clientID,
+			})
+			c.Writer.Flush()
+		case message := <-clientChan:
+			// Send client-specific message
+			eventType := message["type"].(string)
+			data := message["data"].(gin.H)
+			c.SSEvent(eventType, data)
 			c.Writer.Flush()
 		}
 	}

@@ -7,6 +7,7 @@ import type { ApiEndpointKey } from '@/cfg';
 import { API_ENDPOINTS } from '@/cfg';
 import type { TimelineCompositionResponse, Timeline as TimelineType } from '#types/timeline';
 import { ZTimelineCompositionResponse } from '#types/timeline';
+import { useSSEContext } from './VideoProgressContext';
 
 /*
 Sources of errors perhaps emerge with the types here;
@@ -35,7 +36,7 @@ interface SubmissionContextValue {
   timeline: TimelineType | null;
   timelineComposition: TimelineCompositionResponse | null;
   submitTimeline: (prompt: string, images: File[]) => Promise<TimelineCompositionResponse | Error>;
-  requestVideo: (apiKey: ApiEndpointKey, prompt: string, images: File[], timelineComposition: TimelineCompositionResponse) => Promise<VideoResponse | Error>;
+  requestVideo: (apiKey: ApiEndpointKey, prompt: string, images: File[], timelineComposition: TimelineCompositionResponse, clientId?: string) => Promise<VideoResponse | Error>;
   setIsLoading: React.Dispatch<React.SetStateAction<boolean>>;
   setTimeline: React.Dispatch<React.SetStateAction<TimelineType | null>>;
   setTimelineComposition: React.Dispatch<React.SetStateAction<TimelineCompositionResponse | null>>;
@@ -50,6 +51,9 @@ export const SubmissionProvider: React.FC<React.PropsWithChildren> = ({ children
   const [messages, setMessages] = useState<Message[]>([]);
   const [timeline, setTimeline] = useState<TimelineType | null>(null);
   const [timelineComposition, setTimelineComposition] = useState<TimelineCompositionResponse | null>(null);
+  
+  // SSE context for real-time updates
+  const sse = useSSEContext();
 
   const submitTimeline = useCallback(async (prompt: string, images: File[]) => {
     if (!prompt || !prompt.trim()) {
@@ -135,7 +139,7 @@ export const SubmissionProvider: React.FC<React.PropsWithChildren> = ({ children
     }
   }, []);
 
-  const requestVideo = useCallback(async (apiKey: ApiEndpointKey, prompt: string, images: File[], timelineComposition?: TimelineCompositionResponse) => {
+  const requestVideo = useCallback(async (apiKey: ApiEndpointKey, prompt: string, images: File[], timelineComposition?: TimelineCompositionResponse, clientId?: string) => {
 
     const userMessage: Message = {
       id: Date.now().toString(),
@@ -146,6 +150,10 @@ export const SubmissionProvider: React.FC<React.PropsWithChildren> = ({ children
     setMessages(prev => [...prev, userMessage]);
 
     setIsLoading(true);
+    
+    // Start SSE connection for progress tracking
+    sse.connect('http://localhost:8080/api/sse');
+    
     try {
 
       //create a new form data to shoot up.
@@ -170,7 +178,9 @@ Want to dynamically choose eventually 'what' path;
 free ffmpeg or veo3, based on the button params; we'll give it a second however,
 for now
 */
-      const resp = await useMultiPartFormData(formData, MULTIPART_ACTIONS.finalVideo, apiKey);
+      // Use clientId from SSE context if not provided
+      const effectiveClientId = clientId || sse.connection.clientId;
+      const resp = await useMultiPartFormData(formData, MULTIPART_ACTIONS.finalVideo, apiKey, effectiveClientId);
       
       // Guard: Check if response is an error or null
       if (resp instanceof Error || resp === null) {
@@ -217,8 +227,10 @@ for now
       throw err;
     } finally {
       setIsLoading(false);
+      // Stop SSE connection
+      sse.disconnect();
     }
-  }, []);
+  }, [sse]);
 
   const value = useMemo<SubmissionContextValue>(() => ({
     isLoading,

@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React from "react";
 import { Button } from "@/components/ui/button";
 import { useSubmission } from "@/context/SubmissionContext";
 import { toast } from "sonner";
@@ -11,21 +11,26 @@ interface Props {
 }
 
 export const FFMpegRequestButton: React.FC<Props> = ({ prompt, images, disabled, className }) => {
-  
   const { requestVideo, timelineComposition } = useSubmission();
+
   const handleClick = async () => {
-    disabled = true;
+    if (disabled) return;
+    
     if (prompt.trim() === "" || images.length === 0) {
       toast.error("Please enter a prompt and upload at least one image");
       return;
     }
-    if(timelineComposition){
-    await requestVideo("generateVideoReels", prompt, images, timelineComposition);
-    } else {
+    
+    if (!timelineComposition) {
       toast.error("You need to order your images in advance to get the best quality!");
       return;
     }
-    disabled = false;
+
+    try {
+      await requestVideo("generateVideoReels", prompt, images, timelineComposition);
+    } catch (error) {
+      console.error('Video request failed:', error);
+    }
   };
 
   return (    

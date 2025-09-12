@@ -25,7 +25,7 @@ export const useMultiPartFormData = async (formData: any, currentAction: MultiPa
         case MULTIPART_ACTIONS.imageTimeline:
             return imageTimelineHandler(formData);
         case MULTIPART_ACTIONS.finalVideo:
-            return finalVideoHandler({formData, apiKey: cfg[0]});
+            return finalVideoHandler({formData, apiKey: cfg[0], clientId: cfg[1]});
         default:
             console.error('Invalid form data type');
             toast.error('Invalid form data type');
@@ -124,7 +124,14 @@ Shoot images and prompt up to the server
         if (!endpoint) {
             throw new Error('Invalid API key');
         }
-        const res = await fetch(endpoint, {
+        
+        // Add client ID as query parameter if available
+        const url = new URL(endpoint);
+        if (VideoRequest.clientId) {
+            url.searchParams.set('client_id', VideoRequest.clientId);
+        }
+        
+        const res = await fetch(url.toString(), {
             method: 'POST',
             body: VideoRequest.formData,
         });
