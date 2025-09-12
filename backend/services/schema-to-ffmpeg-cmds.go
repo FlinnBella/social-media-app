@@ -1,6 +1,7 @@
 package services
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -74,7 +75,7 @@ type CommandBuildInput struct {
 	Metadata_FFmpeg Metadata_Universal_FFmpeg
 	Timeline        video_models.TimelineComposition
 	// Images referenced by index in timeline (ImageIndex)
-	ImagePaths []string
+	ImageorVideoPaths []string
 	// Audio assets
 	Audio AudioConfig
 	// Output path for the final video
@@ -131,6 +132,7 @@ func (rc *ReelsCompiler) Compile(jsonSchemaBlob []byte, InputImagePaths []string
 	if len(reelsTimeline.Metadata.Resolution) != 2 {
 		return nil, fmt.Errorf("invalid resolution resolution array %v", reelsTimeline.Metadata.Resolution)
 	}
+
 	fps := 30
 	if reelsTimeline.Metadata.Fps != "" {
 		if parsed, err := strconv.Atoi(reelsTimeline.Metadata.Fps); err == nil {
@@ -147,9 +149,10 @@ func (rc *ReelsCompiler) Compile(jsonSchemaBlob []byte, InputImagePaths []string
 
 	// Resolve narration via ElevenLabs
 	// Extract all text from TextSegments
-	var textInputs []string
-	for _, segment := range reelsTimeline.Timeline.TextTimeline.TextSegments {
-		textInputs = append(textInputs, segment.Text)
+	textSegments := reelsTimeline.Timeline.TextTimeline.TextSegments
+	textInputs := make([]string, len(textSegments)) // Pre-allocate with exact size
+	for i, segment := range textSegments {
+		textInputs[i] = segment.Text
 	}
 
 	ttsInput := models.TTSInput{
@@ -159,17 +162,11 @@ func (rc *ReelsCompiler) Compile(jsonSchemaBlob []byte, InputImagePaths []string
 	var elevenlabsFileData *models.FileOutput
 
 	//Generate tts narration elevenlabs
-	if rc.voiceService != (ElevenLabsService{}) {
-		// Ensure a tmp dir for TTS
-		ttsDir := filepath.Join(os.TempDir(), "tts_audio")
-		if err := os.MkdirAll(ttsDir, 0o755); err != nil {
-			return nil, fmt.Errorf("failed to create tts tmp dir: %v", err)
-		}
+	if rc.voiceService.config != nil {
 		data, err := rc.voiceService.GenerateSpeechToTmp(ttsInput.TextInput)
 		if err != nil {
 			return nil, fmt.Errorf("tts generation failed: %v", err)
 		}
-
 		//extend scope of data
 		elevenlabsFileData = data
 		// Add TTS files to cleanup list
@@ -180,7 +177,7 @@ func (rc *ReelsCompiler) Compile(jsonSchemaBlob []byte, InputImagePaths []string
 	musicPath := ""
 	musicName := ""
 
-	if reelsTimeline.Music.Enabled && rc.bgMusic != (BackgroundMusic{}) {
+	if reelsTimeline.Music.Enabled && rc.bgMusic.cfg != nil {
 		mf, err := rc.bgMusic.CreateBackgroundMusic(reelsTimeline.Music.Genre)
 		if err != nil {
 			return nil, fmt.Errorf("bgm download failed: %v", err)
@@ -198,9 +195,9 @@ func (rc *ReelsCompiler) Compile(jsonSchemaBlob []byte, InputImagePaths []string
 
 	// Execute FFmpeg and return video stream
 	return rc.Build(CommandBuildInput{
-		Metadata_FFmpeg: meta,
-		Timeline:        reelsTimeline,
-		ImagePaths:      InputImagePaths,
+		Metadata_FFmpeg:   meta,
+		Timeline:          reelsTimeline,
+		ImageorVideoPaths: InputImagePaths,
 		Audio: AudioConfig{
 			ttsNarrationPaths: ttsNarartionFiles{FilePath: []string{elevenlabsFileData.FilePath}, FileName: []string{elevenlabsFileData.FileName}},
 			MusicEnabled:      reelsTimeline.Music.Enabled,
@@ -215,6 +212,7 @@ func (rc *ReelsCompiler) Compile(jsonSchemaBlob []byte, InputImagePaths []string
 
 // Compile implements VideoCompiler interface for ProCompiler
 // Pro-specific compilation: high quality, videos, professional processing
+// Compilier actually works the same exact way as reels; but we're avoiding abstractions for now
 func (pc *ProCompiler) Compile(jsonSchemaBlob []byte, InputVideoPaths []string) (io.Reader, error) {
 	var proTimeline video_models.TimelineComposition
 	err := json.Unmarshal(jsonSchemaBlob, &proTimeline)
@@ -231,14 +229,86 @@ func (pc *ProCompiler) Compile(jsonSchemaBlob []byte, InputVideoPaths []string) 
 		}
 	}()
 
-	// TODO: Parse Pro-specific JSON schema
-	// TODO: Process videos for high-quality output
-	// TODO: Generate Pro-specific FFmpeg args (different codecs, quality settings)
+	// Map Properties.Metadata.Properties
+	if len(proTimeline.Metadata.Resolution) != 2 {
+		return nil, fmt.Errorf("invalid resolution resolution array %v", proTimeline.Metadata.Resolution)
+	}
 
-	// For now, delegate to ReelsCompiler logic but with Pro-specific optimizations
-	// This is a placeholder - implement Pro-specific logic here
+	fps := 30
+	if proTimeline.Metadata.Fps != "" {
+		if parsed, err := strconv.Atoi(proTimeline.Metadata.Fps); err == nil {
+			fps = parsed
+		}
+	}
+	meta := Metadata_Universal_FFmpeg{
+		TotalDuration: proTimeline.Metadata.TotalDuration,
+		AspectRatio:   proTimeline.Metadata.AspectRatio,
+		FPS:           fps,
+		Width:         proTimeline.Metadata.Resolution[0],
+		Height:        proTimeline.Metadata.Resolution[1],
+	}
 
-	return nil, fmt.Errorf("ProCompiler.Compile not yet implemented")
+	// Resolve narration via ElevenLabs
+	// Extract all text from TextSegments
+	textSegments := proTimeline.Timeline.TextTimeline.TextSegments
+	textInputs := make([]string, len(textSegments)) // Pre-allocate with exact size
+	for i, segment := range textSegments {
+		textInputs[i] = segment.Text
+	}
+
+	ttsInput := models.TTSInput{
+		TextInput: textInputs,
+	}
+
+	var elevenlabsFileData *models.FileOutput
+
+	//Generate tts narration elevenlabs
+	if pc.voiceService.config != nil {
+		data, err := pc.voiceService.GenerateSpeechToTmp(ttsInput.TextInput)
+		if err != nil {
+			return nil, fmt.Errorf("tts generation failed: %v", err)
+		}
+		//extend scope of data
+		elevenlabsFileData = data
+		// Add TTS files to cleanup list
+		intermediateFiles = append(intermediateFiles, data.FilePath)
+	}
+
+	// Resolve music if enabled
+	musicPath := ""
+	musicName := ""
+
+	if proTimeline.Music.Enabled && pc.bgMusic.cfg != nil {
+		mf, err := pc.bgMusic.CreateBackgroundMusic(proTimeline.Music.Genre)
+		if err != nil {
+			return nil, fmt.Errorf("bgm download failed: %v", err)
+		}
+		musicPath = mf.FilePath
+		musicName = mf.FileName
+
+		// Add music file to cleanup list
+		intermediateFiles = append(intermediateFiles, mf.FilePath)
+	}
+
+	// Auto-generate an output path under the OS temp directory
+	tmpDir := filepath.Join(os.TempDir(), "reels_video")
+	autoOutput := filepath.Join(tmpDir, fmt.Sprintf("short_%d.mp4", time.Now().UnixNano()))
+
+	// Execute FFmpeg and return video stream
+	return pc.Build(CommandBuildInput{
+		Metadata_FFmpeg:   meta,
+		Timeline:          proTimeline,
+		ImageorVideoPaths: InputVideoPaths,
+		Audio: AudioConfig{
+			ttsNarrationPaths: ttsNarartionFiles{FilePath: []string{elevenlabsFileData.FilePath}, FileName: []string{elevenlabsFileData.FileName}},
+			MusicEnabled:      proTimeline.Music.Enabled,
+			MusicPath:         MusicFiles{MusicPath: musicPath, MusicName: musicName},
+			MusicVolume:       proTimeline.Music.Volume,
+			NarrationVolume:   1.0,
+		},
+		FinalVideoPath:   autoOutput,
+		FinalVideoTmpDir: tmpDir,
+	})
 }
 
 func (rc *ReelsCompiler) Build(in CommandBuildInput) (io.Reader, error) {
@@ -250,7 +320,7 @@ func (rc *ReelsCompiler) Build(in CommandBuildInput) (io.Reader, error) {
 	}
 
 	// Validate image input paths exist
-	for _, p := range in.ImagePaths {
+	for _, p := range in.ImageorVideoPaths {
 		if _, err := os.Stat(p); err != nil {
 			return nil, fmt.Errorf("missing input file: %s: %v", p, err)
 		}
@@ -258,7 +328,7 @@ func (rc *ReelsCompiler) Build(in CommandBuildInput) (io.Reader, error) {
 
 	// Validate image indices
 	for _, t := range in.Timeline.Timeline.ImageTimeline.ImageSegments {
-		if t.ImageIndex < 0 || t.ImageIndex >= len(in.ImagePaths) {
+		if t.ImageIndex < 0 || t.ImageIndex >= len(in.ImageorVideoPaths) {
 			return nil, fmt.Errorf("image item %d references invalid image index", t.ImageIndex)
 		}
 
@@ -276,13 +346,13 @@ func (rc *ReelsCompiler) Build(in CommandBuildInput) (io.Reader, error) {
 	args := []string{"-y"}
 
 	// Image inputs (each once); we will reference by indices
-	for _, p := range in.ImagePaths {
+	for _, p := range in.ImageorVideoPaths {
 		// APPEND IMAGES AS INPUTS INTO FFMPEG - FIRST INPUT APPEND
 		args = append(args, "-i", p)
 	}
 
 	// Audio inputs appended at the end so index math is predictable
-	numImageInputs := len(in.ImagePaths)
+	numImageInputs := len(in.ImageorVideoPaths)
 	audioInputStart := numImageInputs
 	// Validate narration and music file paths before adding as inputs
 
@@ -328,7 +398,7 @@ func (rc *ReelsCompiler) Build(in CommandBuildInput) (io.Reader, error) {
 	// We map image input index -> variable label like [imgN]
 	imageStreamCount := 0
 	for idx, t := range sorted {
-		if t.ImageIndex < 0 || t.ImageIndex >= len(in.ImagePaths) {
+		if t.ImageIndex < 0 || t.ImageIndex >= len(in.ImageorVideoPaths) {
 			continue
 		}
 		imgInputIdx := t.ImageIndex
@@ -346,7 +416,7 @@ func (rc *ReelsCompiler) Build(in CommandBuildInput) (io.Reader, error) {
 	// Concatenate all video segments in order
 	concatInputs := ""
 	for idx, t := range sorted {
-		if t.ImageIndex >= 0 && t.ImageIndex < len(in.ImagePaths) {
+		if t.ImageIndex >= 0 && t.ImageIndex < len(in.ImageorVideoPaths) {
 			concatInputs += fmt.Sprintf("[seg%d]", idx)
 		}
 	}
@@ -360,7 +430,7 @@ func (rc *ReelsCompiler) Build(in CommandBuildInput) (io.Reader, error) {
 	textIdx := 0
 	textsegments := in.Timeline.Timeline.TextTimeline.TextSegments
 	for _, t := range sorted {
-		if t.ImageIndex < 0 || t.ImageIndex >= len(in.ImagePaths) {
+		if t.ImageIndex < 0 || t.ImageIndex >= len(in.ImageorVideoPaths) {
 			continue
 		}
 		if textIdx >= len(textsegments) {
@@ -457,10 +527,47 @@ func (rc *ReelsCompiler) Build(in CommandBuildInput) (io.Reader, error) {
 // Compile implements VideoCompiler interface for ReelsCompiler
 
 func (pc *ProCompiler) Build(in CommandBuildInput) (io.Reader, error) {
+	var finalVideo []byte
 	// TODO: Implement Pro-specific FFmpeg args and execution
 	// For now, delegate to ReelsCompiler logic
-	reelsCompiler := &ReelsCompiler{}
-	return reelsCompiler.Build(in)
+
+	//puuting as input image/video paths, tts narration, and music
+	//perhaps need to arrange inputs in specific order? Regardless need
+	//to keep track of my inpuuts indices in the args
+	args := []string{"-y"}
+	for _, p := range in.ImageorVideoPaths {
+		args = append(args, "-i", p)
+	}
+	for _, a := range in.Audio.ttsNarrationPaths.FilePath {
+		args = append(args, "-i", a)
+	}
+	if in.Audio.MusicEnabled && in.Audio.MusicPath.MusicPath != "" {
+		args = append(args, "-i", in.Audio.MusicPath.MusicPath)
+	}
+
+	//filter complex logic (don't fully understand what this is)
+	args = append(args, "-filter_complex", filter, "-map", finalVideoLabel)
+	if len(audioMaps) > 0 {
+		for _, am := range audioMaps {
+			args = append(args, "-map", am)
+		}
+	}
+
+	// demuxing so I can compose multiple videos based on indicies
+
+	//where do I combine the audio and video streams? When do I apply the 'filters'?
+	//what other logic can I add to this
+	//I know this is stupid, but let's go with the safe option for now
+	err := os.WriteFile(in.FinalVideoPath, finalVideo, 0644)
+	if err != nil {
+		return nil, fmt.Errorf("failed to write final video: %v", err)
+	}
+	sameVideoFileReadFromDisk, err := os.ReadFile(in.FinalVideoPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to read final video: %v", err)
+	}
+	return bytes.NewReader(sameVideoFileReadFromDisk), nil
+
 }
 
 /*

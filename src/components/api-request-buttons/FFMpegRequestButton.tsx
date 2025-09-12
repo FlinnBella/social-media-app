@@ -12,14 +12,19 @@ interface Props {
 
 export const FFMpegRequestButton: React.FC<Props> = ({ prompt, images, disabled, className }) => {
   
-  const { requestVideo } = useSubmission();
+  const { requestVideo, timelineComposition } = useSubmission();
   const handleClick = async () => {
     disabled = true;
     if (prompt.trim() === "" || images.length === 0) {
       toast.error("Please enter a prompt and upload at least one image");
       return;
     }
-    await requestVideo("generateVideoReels", prompt, images);
+    if(timelineComposition){
+    await requestVideo("generateVideoReels", prompt, images, timelineComposition);
+    } else {
+      toast.error("You need to order your images in advance to get the best quality!");
+      return;
+    }
     disabled = false;
   };
 
