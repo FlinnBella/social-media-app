@@ -5,7 +5,7 @@ import { FFMpegRequestButton } from '@/components/api-request-buttons/FFMpegRequ
 import { VeoRequestButton } from '@/components/api-request-buttons/VeoRequestButton';
 import { useSubmission } from '@/context/SubmissionContext';
 import { MakeTypeFieldsRequired } from '@/utilites/typeutils';
-import Xarrow from 'react-xarrows';
+import Xarrow, { Xwrapper } from 'react-xarrows';
 import { Spinner } from '@/components/ui/shadcn-io/spinner';
 
 interface TimelineProps {
@@ -19,13 +19,10 @@ interface TimelineProps {
 export const Timeline = ({ ImageSegments, TextSegments, prompt, images, previewUrls }: TimelineProps) => {
 const { isLoading } = useSubmission();
 
-
 /*
-
 Logic kerfuffle 
 I fucking hate coding; bunch of autistic shitheads in this field;
 I hope to leave the industry soon :) 
-
 */
 
 const MapImageSegments = (
@@ -66,7 +63,7 @@ const MapImageSegments = (
                 <div className="w-28 aspect-square" id={cardId}>
                     <TimelineCard key={segment.ordering} segment={segmentWithFile} script={matchedScript} />
                 </div>
-                {prevCardId && cardId&& <Xarrow start={prevCardId} end={cardId} />}
+                {prevCardId && cardId&& <Xarrow lineColor={"black"} start={prevCardId} end={cardId} />}
             </div>
         )
     })
@@ -76,9 +73,9 @@ const MapImageSegments = (
         <div>
             <div className={isLoading ? 'opacity-50' : 'bg-white rounded-lg p-4'}>
             <div>Visualize your shorts timeline!</div>
-
+            <Xwrapper>
             <div className="flex flex-row flex-wrap gap-3"> {MapImageSegments(ImageSegments, TextSegments, images, previewUrls)} </div>
-
+            </Xwrapper>
             <div className="flex flex-row items-center justify-center flex-wrap gap-3">
                 {isLoading ? <p>Generating Video...</p> : <p> If everything looks good, click a button to generate your video!</p>}
                 <div className="flex items-center gap-2">

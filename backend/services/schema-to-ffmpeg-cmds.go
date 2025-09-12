@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 	"social-media-ai-video/models"
 	video_models "social-media-ai-video/models/timeline"
-	video_models_reels_ffmpeg "social-media-ai-video/models/video_ffmpeg"
 	"sort"
 	"strconv"
 	"time"
@@ -49,7 +48,7 @@ type AudioConfig struct {
 }
 
 type ttsNarartionFiles struct {
-	FilePath map[string]string
+	FilePath []string
 	FileName []string
 }
 
@@ -73,13 +72,14 @@ type Metadata_Universal_FFmpeg struct {
 
 type CommandBuildInput struct {
 	Metadata_FFmpeg Metadata_Universal_FFmpeg
-	Timeline        video_models_reels_ffmpeg.Timeline
+	Timeline        video_models.TimelineComposition
 	// Images referenced by index in timeline (ImageIndex)
 	ImagePaths []string
 	// Audio assets
 	Audio AudioConfig
 	// Output path for the final video
-	OutputPath string
+	FinalVideoPath   string
+	FinalVideoTmpDir string
 }
 
 // VideoCompiler defines the interface for video compilation strategies
@@ -112,8 +112,8 @@ func NewProCompiler(bg *BackgroundMusic, els *ElevenLabsService) *ProCompiler {
 // Compile takes the AI JSON blob and image paths and returns a video stream
 // Handles its own cleanup of intermediate files
 func (rc *ReelsCompiler) Compile(jsonSchemaBlob []byte, InputImagePaths []string) (io.Reader, error) {
-	var ffmpegTimeline video_models_reels_ffmpeg.Timeline
-	err := json.Unmarshal(jsonSchemaBlob, &ffmpegTimeline)
+	var reelsTimeline video_models.TimelineComposition
+	err := json.Unmarshal(jsonSchemaBlob, &reelsTimeline)
 	if err != nil {
 		return nil, fmt.Errorf("invalid composition json: %v. Given json: %s", err, string(jsonSchemaBlob))
 	}
@@ -127,48 +127,36 @@ func (rc *ReelsCompiler) Compile(jsonSchemaBlob []byte, InputImagePaths []string
 		}
 	}()
 
-	//schema object
-	var vc video_models_reels_ffmpeg.VideoCompositionResponse
-
-	// unwrap optional top-level {"output": ...} wrapper if present
-	var outer struct {
-		Output json.RawMessage `json:"output"`
-	}
-	if err := json.Unmarshal(jsonSchemaBlob, &outer); err == nil && len(outer.Output) > 0 {
-		jsonSchemaBlob = outer.Output
-	}
-
-	//jsonAISchemaBlob should conform to schema, place in vc
-	if err := json.Unmarshal(jsonSchemaBlob, &vc); err != nil {
-		return nil, fmt.Errorf("invalid composition json: %v. Given json: %s", err, string(jsonSchemaBlob))
-	}
-
 	// Map Properties.Metadata.Properties
-	if len(vc.Metadata.Resolution) != 2 {
-		return nil, fmt.Errorf("invalid resolution resolution array %v", vc.Metadata.Resolution)
+	if len(reelsTimeline.Metadata.Resolution) != 2 {
+		return nil, fmt.Errorf("invalid resolution resolution array %v", reelsTimeline.Metadata.Resolution)
 	}
 	fps := 30
-	if vc.Metadata.Fps != "" {
-		if parsed, err := strconv.Atoi(vc.Metadata.Fps); err == nil {
+	if reelsTimeline.Metadata.Fps != "" {
+		if parsed, err := strconv.Atoi(reelsTimeline.Metadata.Fps); err == nil {
 			fps = parsed
 		}
 	}
 	meta := Metadata_Universal_FFmpeg{
-		TotalDuration: vc.Metadata.TotalDuration,
-		AspectRatio:   vc.Metadata.AspectRatio,
+		TotalDuration: reelsTimeline.Metadata.TotalDuration,
+		AspectRatio:   reelsTimeline.Metadata.AspectRatio,
 		FPS:           fps,
-		Width:         vc.Metadata.Resolution[0],
-		Height:        vc.Metadata.Resolution[1],
+		Width:         reelsTimeline.Metadata.Resolution[0],
+		Height:        reelsTimeline.Metadata.Resolution[1],
 	}
 
 	// Resolve narration via ElevenLabs
-	ttsInput := models.TTSInput{
-		TextInput:     vc.Timeline.TextTimeline.TextSegments,
-		VoiceSettings: vc.Audio.Narration.Voice,
+	// Extract all text from TextSegments
+	var textInputs []string
+	for _, segment := range reelsTimeline.Timeline.TextTimeline.TextSegments {
+		textInputs = append(textInputs, segment.Text)
 	}
 
-	ttsNarrationPathsMap := map[string]string{}
-	ttsNarrationPaths := []string{}
+	ttsInput := models.TTSInput{
+		TextInput: textInputs,
+	}
+
+	var elevenlabsFileData *models.FileOutput
 
 	//Generate tts narration elevenlabs
 	if rc.voiceService != (ElevenLabsService{}) {
@@ -177,26 +165,23 @@ func (rc *ReelsCompiler) Compile(jsonSchemaBlob []byte, InputImagePaths []string
 		if err := os.MkdirAll(ttsDir, 0o755); err != nil {
 			return nil, fmt.Errorf("failed to create tts tmp dir: %v", err)
 		}
-		filenames, fileoutputmap, err := rc.voiceService.GenerateSpeechToTmp(ttsInput, ttsDir)
+		data, err := rc.voiceService.GenerateSpeechToTmp(ttsInput.TextInput)
 		if err != nil {
 			return nil, fmt.Errorf("tts generation failed: %v", err)
 		}
 
-		ttsNarrationPathsMap = fileoutputmap
-		ttsNarrationPaths = filenames
-
+		//extend scope of data
+		elevenlabsFileData = data
 		// Add TTS files to cleanup list
-		for _, file := range fileoutputmap {
-			intermediateFiles = append(intermediateFiles, file)
-		}
+		intermediateFiles = append(intermediateFiles, data.FilePath)
 	}
 
 	// Resolve music if enabled
 	musicPath := ""
 	musicName := ""
 
-	if vc.Audio.Music.Enabled && rc.bgMusic != (BackgroundMusic{}) {
-		mf, err := rc.bgMusic.CreateBackgroundMusic(vc.Audio.Music.Mood, vc.Audio.Music.Genre)
+	if reelsTimeline.Music.Enabled && rc.bgMusic != (BackgroundMusic{}) {
+		mf, err := rc.bgMusic.CreateBackgroundMusic(reelsTimeline.Music.Genre)
 		if err != nil {
 			return nil, fmt.Errorf("bgm download failed: %v", err)
 		}
@@ -208,27 +193,29 @@ func (rc *ReelsCompiler) Compile(jsonSchemaBlob []byte, InputImagePaths []string
 	}
 
 	// Auto-generate an output path under the OS temp directory
-	autoOutput := filepath.Join(os.TempDir(), fmt.Sprintf("short_%d.mp4", time.Now().UnixNano()))
+	tmpDir := filepath.Join(os.TempDir(), "reels_video")
+	autoOutput := filepath.Join(tmpDir, fmt.Sprintf("short_%d.mp4", time.Now().UnixNano()))
 
 	// Execute FFmpeg and return video stream
 	return rc.Build(CommandBuildInput{
 		Metadata_FFmpeg: meta,
-		Timeline:        vc.Timeline,
+		Timeline:        reelsTimeline,
 		ImagePaths:      InputImagePaths,
 		Audio: AudioConfig{
-			ttsNarrationPaths: ttsNarartionFiles{FilePath: ttsNarrationPathsMap, FileName: ttsNarrationPaths},
-			MusicEnabled:      vc.Audio.Music.Enabled,
+			ttsNarrationPaths: ttsNarartionFiles{FilePath: []string{elevenlabsFileData.FilePath}, FileName: []string{elevenlabsFileData.FileName}},
+			MusicEnabled:      reelsTimeline.Music.Enabled,
 			MusicPath:         MusicFiles{MusicPath: musicPath, MusicName: musicName},
-			MusicVolume:       vc.Audio.Music.Volume,
+			MusicVolume:       reelsTimeline.Music.Volume,
 			NarrationVolume:   1.0,
 		},
-		OutputPath: autoOutput,
+		FinalVideoPath:   autoOutput,
+		FinalVideoTmpDir: tmpDir,
 	})
 }
 
 // Compile implements VideoCompiler interface for ProCompiler
 // Pro-specific compilation: high quality, videos, professional processing
-func (pc *ProCompiler) Compile(jsonSchemaBlob []byte, InputImagePaths []string) (io.Reader, error) {
+func (pc *ProCompiler) Compile(jsonSchemaBlob []byte, InputVideoPaths []string) (io.Reader, error) {
 	var proTimeline video_models.TimelineComposition
 	err := json.Unmarshal(jsonSchemaBlob, &proTimeline)
 	if err != nil {
@@ -258,7 +245,7 @@ func (rc *ReelsCompiler) Build(in CommandBuildInput) (io.Reader, error) {
 	if in.Metadata_FFmpeg.Width <= 0 || in.Metadata_FFmpeg.Height <= 0 || in.Metadata_FFmpeg.FPS <= 0 {
 		return nil, fmt.Errorf("invalid metadata: width/height/fps must be > 0")
 	}
-	if in.OutputPath == "" {
+	if in.FinalVideoPath == "" {
 		return nil, fmt.Errorf("missing output path")
 	}
 
@@ -270,7 +257,7 @@ func (rc *ReelsCompiler) Build(in CommandBuildInput) (io.Reader, error) {
 	}
 
 	// Validate image indices
-	for _, t := range in.Timeline.ImageTimeline.ImageSegments {
+	for _, t := range in.Timeline.Timeline.ImageTimeline.ImageSegments {
 		if t.ImageIndex < 0 || t.ImageIndex >= len(in.ImagePaths) {
 			return nil, fmt.Errorf("image item %d references invalid image index", t.ImageIndex)
 		}
@@ -278,8 +265,8 @@ func (rc *ReelsCompiler) Build(in CommandBuildInput) (io.Reader, error) {
 	}
 
 	// Sort timeline by start time to build proper concat order
-	sorted := make([]video_models_reels_ffmpeg.ImageSegment, len(in.Timeline.ImageTimeline.ImageSegments))
-	copy(sorted, in.Timeline.ImageTimeline.ImageSegments)
+	sorted := make([]video_models.ImageSegment, len(in.Timeline.Timeline.ImageTimeline.ImageSegments))
+	copy(sorted, in.Timeline.Timeline.ImageTimeline.ImageSegments)
 	sort.Slice(sorted, func(i, j int) bool { return sorted[i].StartTime < sorted[j].StartTime })
 
 	// Input list: images + audio(s)
@@ -305,7 +292,7 @@ func (rc *ReelsCompiler) Build(in CommandBuildInput) (io.Reader, error) {
 	// guard against invalid tts directory, or filename
 	for i := 0; i < len(in.Audio.ttsNarrationPaths.FileName); i++ {
 		fn := in.Audio.ttsNarrationPaths.FileName[i]
-		p := in.Audio.ttsNarrationPaths.FilePath[fn]
+		p := in.Audio.ttsNarrationPaths.FilePath[i]
 		if p == "" {
 			return nil, fmt.Errorf("missing narration path for %s", fn)
 		}
@@ -322,7 +309,7 @@ func (rc *ReelsCompiler) Build(in CommandBuildInput) (io.Reader, error) {
 		}
 	}
 	for i := 0; i < len(in.Audio.ttsNarrationPaths.FileName); i++ {
-		args = append(args, "-i", in.Audio.ttsNarrationPaths.FilePath[in.Audio.ttsNarrationPaths.FileName[i]])
+		args = append(args, "-i", in.Audio.ttsNarrationPaths.FilePath[i])
 
 		//init elevenlabs tts file(s)
 		narrIdx = audioInputStart
@@ -371,7 +358,7 @@ func (rc *ReelsCompiler) Build(in CommandBuildInput) (io.Reader, error) {
 	// Apply text overlays with enable between(t, start, end)
 	videoLabel := "[basev]"
 	textIdx := 0
-	textsegments := in.Timeline.TextTimeline.TextSegments
+	textsegments := in.Timeline.Timeline.TextTimeline.TextSegments
 	for _, t := range sorted {
 		if t.ImageIndex < 0 || t.ImageIndex >= len(in.ImagePaths) {
 			continue

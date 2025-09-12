@@ -2,53 +2,98 @@ package services
 
 import (
 	"social-media-ai-video/config"
+	"social-media-ai-video/models"
+	"social-media-ai-video/services/internal"
 
 	"fmt"
+	"math/rand"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"strings"
+	"time"
 )
 
 type BackgroundMusic struct {
 	cfg *config.APIConfig
 }
 
-type MusicFile struct {
-	FilePath string
-	FileName string
-}
+// MusicFile is now replaced by models.FileOutput
 
 func NewBackgroundMusic(cfg *config.APIConfig) *BackgroundMusic {
 	return &BackgroundMusic{cfg: cfg}
 }
 
-// ResolveAndDownload treats trackIdOrURL as a direct URL for now.
-// Future: look up track by trackId/genre/mood via a catalog/service.
-func (b *BackgroundMusic) CreateBackgroundMusic(mood string, genre string) (*MusicFile, error) {
-	if mood == "" || genre == "" {
+// CreateBackgroundMusic selects a random track from the specified genre and trims it to 30 seconds
+func (b *BackgroundMusic) CreateBackgroundMusic(genre string) (*models.FileOutput, error) {
+	if genre == "" {
 		return nil, fmt.Errorf("empty mood/genre")
 	}
 
-	filePath, fileName, err := func(mood string, genre string) (string, string, error) {
-		//set this up later, but just invoke function for now; no actual logic
-		filePath, fileName, err := SelectMusicHelper(mood, genre)
-		if err != nil {
-			return "", "", err
-		}
-		fileName = "Aurora%20on%20the%20Boulevard%20-%20National%20Sweetheart.mp3"
-		filePath = "music/Aurora%20on%20the%20Boulevard%20-%20National%20Sweetheart.mp3"
-
-		return filePath, fileName, nil
-
-	}(mood, genre)
-	if err != nil {
-		fmt.Errorf("failed to select music: %v", err)
-		panic(err)
+	// Get tracks for the specified genre
+	tracks, exists := internal.MusicThemeMap[genre]
+	if !exists {
+		return nil, fmt.Errorf("unknown genre: %s", genre)
 	}
 
-	return &MusicFile{FilePath: filePath, FileName: fileName}, nil
+	if len(tracks) == 0 {
+		return nil, fmt.Errorf("no tracks available for genre: %s", genre)
+	}
+
+	// Select a random track
+	rand.Seed(time.Now().UnixNano())
+	selectedTrack := tracks[rand.Intn(len(tracks))]
+
+	// Create temp directory
+	tmpDir, err := os.MkdirTemp("", "background_music-*")
+	if err != nil {
+		return nil, fmt.Errorf("failed to create temp dir: %v", err)
+	}
+
+	// Create trimmed version of the track (30 seconds)
+	trimmedFilePath, err := b.trimMusicTo30Seconds(selectedTrack, tmpDir)
+	if err != nil {
+		os.RemoveAll(tmpDir) // Clean up on error
+		return nil, fmt.Errorf("failed to trim music: %v", err)
+	}
+
+	return models.NewFileOutput(trimmedFilePath, tmpDir), nil
 }
 
-/*
-Future logic to select specific mp3; for now just pull a particular one from library
-*/
-func SelectMusicHelper(mood string, genre string) (string, string, error) {
-	return "", "", nil
+// trimMusicTo30Seconds uses ffmpeg to trim a background music file to 30 seconds
+func (b *BackgroundMusic) trimMusicTo30Seconds(inputFileName, tmpDir string) (string, error) {
+	// Construct paths
+	sourcePath := filepath.Join("services/internal/music", inputFileName)
+
+	// Preserve original filename but add "bgm_30s_" prefix to indicate it's background music trimmed to 30 seconds
+	// Remove .mp3 extension, add bgm_30s prefix, then add .mp3 back
+	baseName := strings.TrimSuffix(inputFileName, ".mp3")
+	trimmedFileName := "bgm_30s_" + baseName + ".mp3"
+	outputPath := filepath.Join(tmpDir, trimmedFileName)
+
+	// Check if source file exists
+	if _, err := os.Stat(sourcePath); os.IsNotExist(err) {
+		return "", fmt.Errorf("source music file not found: %s", sourcePath)
+	}
+
+	// Use ffmpeg to trim to 30 seconds
+	cmd := exec.Command("ffmpeg",
+		"-i", sourcePath,
+		"-t", "30", // Duration: 30 seconds
+		"-c", "copy", // Copy without re-encoding for speed
+		"-y", // Overwrite output file
+		outputPath,
+	)
+
+	// Run ffmpeg command
+	if err := cmd.Run(); err != nil {
+		return "", fmt.Errorf("ffmpeg failed to trim music: %v", err)
+	}
+
+	// Verify output file was created
+	if _, err := os.Stat(outputPath); os.IsNotExist(err) {
+		return "", fmt.Errorf("trimmed music file was not created")
+	}
+
+	return outputPath, nil
 }

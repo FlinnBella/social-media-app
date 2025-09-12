@@ -11,65 +11,53 @@ import (
 	"social-media-ai-video/config"
 	"social-media-ai-video/models"
 	"strings"
-	"time"
 )
 
 type ElevenLabsService struct {
 	config *config.APIConfig
 }
 
-type TTSRequest struct {
-	Text          string                 `json:"text"`
-	ModelID       string                 `json:"model_id"`
-	VoiceSettings map[string]interface{} `json:"voice_settings"`
-}
-
 func NewElevenLabsService(cfg *config.APIConfig) *ElevenLabsService {
 	return &ElevenLabsService{config: cfg}
 }
 
+type TTSRequest struct {
+	Text          string                  `json:"text"`
+	ModelID       string                  `json:"model_id"`
+	VoiceSettings *map[string]interface{} `json:"voice_settings"`
+}
+
+const (
+	femaleVoiceId = "Dslrhjl3ZpzrctukrQSN"
+)
+
 // GenerateSpeechToTmp generates TTS audio and writes it under tmpDir.
-// Returns the absolute output path and the filename.
+// Returns a FileOutput containing the file path, filename, and temp directory.
 // generates a set of audio files, used for concatenated in ffmpeg
-func (els *ElevenLabsService) GenerateSpeechToTmp(input models.TTSInput, tmpDir string) (filenames []string, fileoutputmap map[string]string, err error) {
+func (els *ElevenLabsService) GenerateSpeechToTmp(text []string) (*models.FileOutput, error) {
 	// Buffer for text-to-speech parts
-	var parts []string
+
 	//exact outpath paths into TmpDir
 	//exact filenames; prefixed with elevenlabs_
-	var flnames []string
-	var filetomap map[string]string = make(map[string]string)
-
-	for _, seg := range input.TextInput {
-		if strings.TrimSpace(seg.Text) != "" {
-			parts = append(parts, seg.Text)
-		}
-	}
-
-	text := strings.Join(parts, " ")
+	one_shot_script := strings.Join(text, " ")
 
 	payload := TTSRequest{
-		Text:    text,
-		ModelID: "eleven_multilingual_v2",
-		VoiceSettings: map[string]interface{}{
-			"stability":        input.VoiceSettings.Stability,
-			"similarity_boost": 0.5,
-			"speed":            1.0,
-		},
-		//|| input.VoiceSettings.Speed, add this later perhaps
+		Text:          one_shot_script,
+		ModelID:       "eleven_multilingual_v2",
+		VoiceSettings: nil,
 	}
 
 	jsonData, err := json.Marshal(payload)
 	if err != nil {
-		return []string{}, map[string]string{}, fmt.Errorf("failed to marshal TTS request: %v", err)
+		return nil, fmt.Errorf("failed to marshal TTS request: %v", err)
 	}
 
 	// For now, hardcode the voice ID
-	voiceId := "Dslrhjl3ZpzrctukrQSN"
 
-	url := fmt.Sprintf("%s/text-to-speech/%s", els.config.ElevenLabsBaseURL, voiceId)
+	url := fmt.Sprintf("%s/text-to-speech/%s", els.config.ElevenLabsBaseURL, femaleVoiceId)
 	req, err := http.NewRequest("POST", url, bytes.NewBuffer(jsonData))
 	if err != nil {
-		return []string{}, map[string]string{}, fmt.Errorf("failed to create TTS request: %v", err)
+		return nil, fmt.Errorf("failed to create TTS request: %v", err)
 	}
 
 	req.Header.Set("Accept", "audio/mpeg")
@@ -79,47 +67,43 @@ func (els *ElevenLabsService) GenerateSpeechToTmp(input models.TTSInput, tmpDir 
 	client := &http.Client{}
 	resp, err := client.Do(req)
 	if err != nil {
-		return []string{}, map[string]string{}, fmt.Errorf("failed to make TTS request: %v", err)
+		return nil, fmt.Errorf("failed to make TTS request: %v", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return []string{}, map[string]string{}, fmt.Errorf("TTS API returned status %d: %s", resp.StatusCode, string(body))
+		return nil, fmt.Errorf("TTS API returned status %d: %s", resp.StatusCode, resp.Body)
 	}
-
 	/*
-		GUARDS
-
+		Creating TmpDir and adding file
 	*/
-	if tmpDir == "" {
-		return []string{}, map[string]string{}, fmt.Errorf("tmpDir is empty")
-	}
-	if err := os.MkdirAll(tmpDir, 0o755); err != nil {
-		return []string{}, map[string]string{}, fmt.Errorf("failed to create temp dir: %v", err)
-	}
-
-	/*
-		GUARDS
-
-	*/
-
-	filename := fmt.Sprintf("audio_%d.mp3", time.Now().UnixNano())
-	outputPath := filepath.Join(tmpDir, filename)
-	file, err := os.Create(outputPath)
+	tmpDir, err := os.MkdirTemp("", "elevenlabs_voice-*")
 	if err != nil {
-		return []string{}, map[string]string{}, fmt.Errorf("failed to create audio file: %v", err)
+		return nil, fmt.Errorf("failed to create temp dir: %v", err)
 	}
-	defer file.Close()
+	file := filepath.Join(tmpDir, "elevenlabs_voice.mp3")
 
-	_, err = io.Copy(file, resp.Body)
+	// Create the file and stream directly from response body
+	fileHandle, err := os.Create(file)
 	if err != nil {
-		return []string{}, map[string]string{}, fmt.Errorf("failed to save audio file: %v", err)
+		os.RemoveAll(tmpDir)
+		return nil, fmt.Errorf("failed to create audio file: %v", err)
 	}
+	defer fileHandle.Close()
 
-	filetomap[filename] = outputPath
-	flnames = append(flnames, filename)
-
+	// Stream directly from HTTP response to file
+	_, err = io.Copy(fileHandle, resp.Body)
+	if err != nil {
+		os.RemoveAll(tmpDir)
+		return nil, fmt.Errorf("failed to write audio file: %v", err)
+	}
 	//set up mapping structure; want to split voice files up eventually... perhaps?
-	return flnames, filetomap, nil
+
+	// Optional: Schedule cleanup after 1 hour (uncomment if you want automatic cleanup)
+	// go func() {
+	//     time.Sleep(1 * time.Hour)
+	//     os.RemoveAll(tmpDir)
+	// }()
+
+	return models.NewFileOutput(file, tmpDir), nil
 }
