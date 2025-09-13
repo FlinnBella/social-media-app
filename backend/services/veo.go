@@ -3,19 +3,23 @@ package services
 import (
 	"context"
 	"encoding/base64"
+	"fmt"
 	"io"
 	"log"
 	"mime/multipart"
+	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"google.golang.org/genai"
 
 	"social-media-ai-video/config"
-
-	"fmt"
-	"net/http"
-	"strings"
+	"social-media-ai-video/models"
+	"social-media-ai-video/models/interfaces"
+	"social-media-ai-video/utils"
 
 	//errgroup for concurrency
 	"golang.org/x/sync/errgroup"
@@ -31,10 +35,88 @@ func NewVeoService(cfg *config.APIConfig) *VeoService {
 	}
 }
 
+// Interface-compliant method for single video generation
+func (vs *VeoService) GenerateVideo(prompt string, images []string, cfg *config.APIConfig) (*models.FileOutput, error) {
+	// For now, generate the first image as a single video
+	if len(images) == 0 {
+		return nil, fmt.Errorf("no images provided")
+	}
+
+	// Create unique request directory
+	requestID := utils.GenerateUniqueID()
+	outputDir := filepath.Join("./tmp", "veo", requestID)
+	if err := os.MkdirAll(outputDir, 0755); err != nil {
+		return nil, fmt.Errorf("failed to create output directory: %v", err)
+	}
+
+	// Generate video using the first image
+	ctx := context.Background()
+	client, err := genai.NewClient(ctx, &genai.ClientConfig{
+		APIKey:  vs.cfg.GoogleVeoAPIKey,
+		Backend: genai.BackendGeminiAPI,
+	})
+	if err != nil {
+		return nil, fmt.Errorf("failed to create genai client: %v", err)
+	}
+
+	// Read and process the first image
+	imageData, err := os.ReadFile(images[0])
+	if err != nil {
+		return nil, fmt.Errorf("failed to read image: %v", err)
+	}
+
+	// Convert to base64
+	dst := make([]byte, base64.StdEncoding.EncodedLen(len(imageData)))
+	base64.StdEncoding.Encode(dst, imageData)
+
+	img := &genai.Image{ImageBytes: dst, MIMEType: "image/jpeg"}
+
+	// Generate video
+	operation, err := client.Models.GenerateVideos(
+		ctx,
+		"veo-3.0-generate-001",
+		prompt,
+		img,
+		nil,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("failed to start video generation: %v", err)
+	}
+
+	// Poll until complete
+	for !operation.Done {
+		log.Println("Waiting for video generation to complete...")
+		time.Sleep(10 * time.Second)
+		operation, err = client.Operations.GetVideosOperation(ctx, operation, nil)
+		if err != nil {
+			return nil, fmt.Errorf("failed to check operation status: %v", err)
+		}
+	}
+
+	// Download the generated video
+	video := operation.Response.GeneratedVideos[0]
+	client.Files.Download(ctx, video.Video, nil)
+
+	if video.Video.MIMEType != "video/mp4" {
+		return nil, fmt.Errorf("invalid video mime type: %s", video.Video.MIMEType)
+	}
+
+	// Write to disk
+	filename := fmt.Sprintf("veo_%s.mp4", requestID)
+	filepath := filepath.Join(outputDir, filename)
+
+	if err := os.WriteFile(filepath, video.Video.VideoBytes, 0644); err != nil {
+		return nil, fmt.Errorf("failed to write video file: %v", err)
+	}
+
+	// Return FileOutput
+	return models.NewFileOutput(filepath, outputDir), nil
+}
+
 //pass this to the ffmpeg composer & compilier
 //can use ducktyping to make it idenitcal to the other 'pure' ffmpeg implementation
 
-func (vs *VeoService) GenerateVideoMultipart(c *gin.Context, boundary string) ([]string, [][]byte) {
+func (vs *VeoService) GenerateVideoMultipart(c *gin.Context, boundary string) ([]string, [][]byte, error) {
 	promptFound := false
 	//Multipart checks done before; stream to generate multiple videos
 
@@ -100,13 +182,20 @@ func (vs *VeoService) GenerateVideoMultipart(c *gin.Context, boundary string) ([
 
 	*/
 
+	// Create unique request directory for this multipart request
+	requestID := utils.GenerateUniqueID()
+	outputDir := filepath.Join("./tmp", "veo", requestID)
+	if err := os.MkdirAll(outputDir, 0755); err != nil {
+		return nil, nil, fmt.Errorf("failed to create output directory: %v", err)
+	}
+
 	ctx := context.Background()
 	client, err := genai.NewClient(ctx, &genai.ClientConfig{
 		APIKey:  vs.cfg.GoogleVeoAPIKey,
 		Backend: genai.BackendGeminiAPI,
 	})
 	if err != nil {
-		log.Fatal(err)
+		return nil, nil, fmt.Errorf("failed to create genai client: %v", err)
 	}
 
 	prompt := req_prompt
@@ -145,12 +234,18 @@ func (vs *VeoService) GenerateVideoMultipart(c *gin.Context, boundary string) ([
 				c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": fmt.Sprintf("invalid video mime type: %s", video.Video.MIMEType)})
 				return nil
 			}
-			fname := fmt.Sprintf("veo_%d.mp4", time.Now().UnixNano())
+			filename := fmt.Sprintf("veo_%s_%d.mp4", requestID, i)
+			filepath := filepath.Join(outputDir, filename)
 
-			log.Printf("Generated video saved to %s\n", fname)
+			// Write video to disk
+			if err := os.WriteFile(filepath, video.Video.VideoBytes, 0644); err != nil {
+				return fmt.Errorf("failed to write video file %s: %v", filename, err)
+			}
+
+			log.Printf("Generated video saved to %s\n", filepath)
 
 			// preserve order by assigning by index
-			filenames[i] = fname
+			filenames[i] = filepath
 			videos[i] = video.Video.VideoBytes
 			return nil
 		})
@@ -158,10 +253,11 @@ func (vs *VeoService) GenerateVideoMultipart(c *gin.Context, boundary string) ([
 
 	// wait for all goroutines to finish before returning
 	if err := g.Wait(); err != nil {
-		log.Printf("veo generation error: %v", err)
+		return nil, nil, fmt.Errorf("video generation failed: %v", err)
 	}
 
-	//avoid os file writes for now
-	//_ = os.WriteFile(fname, video.Video.VideoBytes, 0644)
-	return filenames, videos
+	return filenames, videos, nil
 }
+
+// Interface compliance check
+var _ interfaces.VideoGeneration = (*VeoService)(nil)

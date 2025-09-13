@@ -9,6 +9,9 @@ import (
 	"social-media-ai-video/config"
 
 	"github.com/gin-gonic/gin"
+
+	"bytes"
+	"io"
 )
 
 type N8NService struct {
@@ -35,7 +38,20 @@ func (ns *N8NService) Get(c *gin.Context, targetURL string) (*http.Response, err
 			Timeout: 30 * time.Second,
 		}
 
-		n8nReq, err := http.NewRequestWithContext(c.Request.Context(), "POST", targetURL, c.Request.Body)
+		//pr, pw := io.Pipe()
+		//
+		//go func() {
+		//	defer pw.Close()
+		//	io.Copy(pw, c.Request.Body)
+		//}()
+
+		bodyBytes, err := io.ReadAll(c.Request.Body)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": fmt.Sprintf("failed to read request body: %v", err)})
+			return nil, err
+		}
+
+		n8nReq, err := http.NewRequestWithContext(c.Request.Context(), "POST", targetURL, bytes.NewReader(bodyBytes))
 		if err != nil {
 			c.JSON(http.StatusInternalServerError, gin.H{"status": "error", "error": fmt.Sprintf("failed to create request: %v", err)})
 			return nil, err

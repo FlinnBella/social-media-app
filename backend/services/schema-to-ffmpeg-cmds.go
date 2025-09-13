@@ -1,17 +1,17 @@
 package services
 
 import (
-	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"social-media-ai-video/config"
 	"social-media-ai-video/models"
+	"social-media-ai-video/models/interfaces"
 	video_models "social-media-ai-video/models/timeline"
 	"sort"
-	"strconv"
 	"time"
 )
 
@@ -27,18 +27,6 @@ import (
 // going to need to revamp entire struct models; schema is just for ai, not for mapping
 
 // AudioConfig holds prepared audio assets
-
-/*
-CODEBASE IS INSANELY CLUTTERED,
-NEED TO IMPLEMENT METHODS TO CLEAN IT UP IMMEDIATELY
-
-STEPS:
-	- TRY TO CUT DOWN ON NUMBER OF STRUCTS
-	- TRY TO CLEAN UP INTERFACES AND NEWFUNCTIONS AND THINGS
-	- PORT THE COMPILERS INTO SOMETHING MORE USEABLE, AND BREAK IT UP
-	- IN IMPLS FOR THE PRO SERVICE AND THE REELS SERVICE
-
-*/
 
 type AudioConfig struct {
 	ttsNarrationPaths ttsNarartionFiles // path to narration (mp3/m4a)
@@ -60,20 +48,10 @@ type MusicFiles struct {
 
 //AudioConfig end
 
-// ffmpeg
-type Metadata_Universal_FFmpeg struct {
-	TotalDuration int
-	AspectRatio   string
-	FPS           int
-	Width         int
-	Height        int
-}
-
 // CommandBuildInput contains everything needed to construct ffmpeg args
 
 type CommandBuildInput struct {
-	Metadata_FFmpeg Metadata_Universal_FFmpeg
-	Timeline        video_models.TimelineComposition
+	Timeline video_models.TimelineComposition
 	// Images referenced by index in timeline (ImageIndex)
 	ImageorVideoPaths []string
 	// Audio assets
@@ -85,34 +63,34 @@ type CommandBuildInput struct {
 
 // VideoCompiler defines the interface for video compilation strategies
 type VideoCompiler interface {
-	Compile(jsonSchemaBlob []byte, InputFilePaths []string) (io.Reader, error)
+	Compile(jsonSchemaBlob []byte, InputFilePaths []string, cfg *config.APIConfig) (io.Reader, error)
 }
 
 //Compiler structs
 
 // ReelsCompiler - standard video compilation for social media reels
 type ReelsCompiler struct {
-	bgMusic      BackgroundMusic
-	voiceService ElevenLabsService
+	bgMusic      interfaces.MusicGeneration
+	voiceService interfaces.VoiceOver
 }
 
-func NewReelsCompiler(bg *BackgroundMusic, els *ElevenLabsService) *ReelsCompiler {
-	return &ReelsCompiler{bgMusic: *bg, voiceService: *els}
+func NewReelsCompiler(bg interfaces.MusicGeneration, els interfaces.VoiceOver) *ReelsCompiler {
+	return &ReelsCompiler{bgMusic: bg, voiceService: els}
 }
 
 // ProCompiler - high-quality video compilation with different ffmpeg strategy
 type ProCompiler struct {
-	bgMusic      BackgroundMusic
-	voiceService ElevenLabsService
+	bgMusic      interfaces.MusicGeneration
+	voiceService interfaces.VoiceOver
 }
 
-func NewProCompiler(bg *BackgroundMusic, els *ElevenLabsService) *ProCompiler {
-	return &ProCompiler{bgMusic: *bg, voiceService: *els}
+func NewProCompiler(bg interfaces.MusicGeneration, els interfaces.VoiceOver) *ProCompiler {
+	return &ProCompiler{bgMusic: bg, voiceService: els}
 }
 
 // Compile takes the AI JSON blob and image paths and returns a video stream
 // Handles its own cleanup of intermediate files
-func (rc *ReelsCompiler) Compile(jsonSchemaBlob []byte, InputImagePaths []string) (io.Reader, error) {
+func (rc *ReelsCompiler) Compile(jsonSchemaBlob []byte, InputImagePaths []string, cfg *config.APIConfig) (io.Reader, error) {
 	var reelsTimeline video_models.TimelineComposition
 	err := json.Unmarshal(jsonSchemaBlob, &reelsTimeline)
 	if err != nil {
@@ -133,20 +111,6 @@ func (rc *ReelsCompiler) Compile(jsonSchemaBlob []byte, InputImagePaths []string
 		return nil, fmt.Errorf("invalid resolution resolution array %v", reelsTimeline.Metadata.Resolution)
 	}
 
-	fps := 30
-	if reelsTimeline.Metadata.Fps != "" {
-		if parsed, err := strconv.Atoi(reelsTimeline.Metadata.Fps); err == nil {
-			fps = parsed
-		}
-	}
-	meta := Metadata_Universal_FFmpeg{
-		TotalDuration: reelsTimeline.Metadata.TotalDuration,
-		AspectRatio:   reelsTimeline.Metadata.AspectRatio,
-		FPS:           fps,
-		Width:         reelsTimeline.Metadata.Resolution[0],
-		Height:        reelsTimeline.Metadata.Resolution[1],
-	}
-
 	// Resolve narration via ElevenLabs
 	// Extract all text from TextSegments
 	textSegments := reelsTimeline.Timeline.TextTimeline.TextSegments
@@ -162,8 +126,8 @@ func (rc *ReelsCompiler) Compile(jsonSchemaBlob []byte, InputImagePaths []string
 	var elevenlabsFileData *models.FileOutput
 
 	//Generate tts narration elevenlabs
-	if rc.voiceService.config != nil {
-		data, err := rc.voiceService.GenerateSpeechToTmp(ttsInput.TextInput)
+	if cfg != nil {
+		data, err := rc.voiceService.GenerateVoiceOver(ttsInput.TextInput, cfg)
 		if err != nil {
 			return nil, fmt.Errorf("tts generation failed: %v", err)
 		}
@@ -177,8 +141,8 @@ func (rc *ReelsCompiler) Compile(jsonSchemaBlob []byte, InputImagePaths []string
 	musicPath := ""
 	musicName := ""
 
-	if reelsTimeline.Music.Enabled && rc.bgMusic.cfg != nil {
-		mf, err := rc.bgMusic.CreateBackgroundMusic(reelsTimeline.Music.Genre)
+	if reelsTimeline.Music.Enabled && cfg != nil {
+		mf, err := rc.bgMusic.GenerateMusic(reelsTimeline.Music.Genre, cfg)
 		if err != nil {
 			return nil, fmt.Errorf("bgm download failed: %v", err)
 		}
@@ -195,7 +159,6 @@ func (rc *ReelsCompiler) Compile(jsonSchemaBlob []byte, InputImagePaths []string
 
 	// Execute FFmpeg and return video stream
 	return rc.Build(CommandBuildInput{
-		Metadata_FFmpeg:   meta,
 		Timeline:          reelsTimeline,
 		ImageorVideoPaths: InputImagePaths,
 		Audio: AudioConfig{
@@ -213,7 +176,7 @@ func (rc *ReelsCompiler) Compile(jsonSchemaBlob []byte, InputImagePaths []string
 // Compile implements VideoCompiler interface for ProCompiler
 // Pro-specific compilation: high quality, videos, professional processing
 // Compilier actually works the same exact way as reels; but we're avoiding abstractions for now
-func (pc *ProCompiler) Compile(jsonSchemaBlob []byte, InputVideoPaths []string) (io.Reader, error) {
+func (pc *ProCompiler) Compile(jsonSchemaBlob []byte, InputVideoPaths []string, cfg *config.APIConfig) (io.Reader, error) {
 	var proTimeline video_models.TimelineComposition
 	err := json.Unmarshal(jsonSchemaBlob, &proTimeline)
 	if err != nil {
@@ -234,20 +197,6 @@ func (pc *ProCompiler) Compile(jsonSchemaBlob []byte, InputVideoPaths []string) 
 		return nil, fmt.Errorf("invalid resolution resolution array %v", proTimeline.Metadata.Resolution)
 	}
 
-	fps := 30
-	if proTimeline.Metadata.Fps != "" {
-		if parsed, err := strconv.Atoi(proTimeline.Metadata.Fps); err == nil {
-			fps = parsed
-		}
-	}
-	meta := Metadata_Universal_FFmpeg{
-		TotalDuration: proTimeline.Metadata.TotalDuration,
-		AspectRatio:   proTimeline.Metadata.AspectRatio,
-		FPS:           fps,
-		Width:         proTimeline.Metadata.Resolution[0],
-		Height:        proTimeline.Metadata.Resolution[1],
-	}
-
 	// Resolve narration via ElevenLabs
 	// Extract all text from TextSegments
 	textSegments := proTimeline.Timeline.TextTimeline.TextSegments
@@ -263,8 +212,8 @@ func (pc *ProCompiler) Compile(jsonSchemaBlob []byte, InputVideoPaths []string) 
 	var elevenlabsFileData *models.FileOutput
 
 	//Generate tts narration elevenlabs
-	if pc.voiceService.config != nil {
-		data, err := pc.voiceService.GenerateSpeechToTmp(ttsInput.TextInput)
+	if cfg != nil {
+		data, err := pc.voiceService.GenerateVoiceOver(ttsInput.TextInput, cfg)
 		if err != nil {
 			return nil, fmt.Errorf("tts generation failed: %v", err)
 		}
@@ -278,8 +227,8 @@ func (pc *ProCompiler) Compile(jsonSchemaBlob []byte, InputVideoPaths []string) 
 	musicPath := ""
 	musicName := ""
 
-	if proTimeline.Music.Enabled && pc.bgMusic.cfg != nil {
-		mf, err := pc.bgMusic.CreateBackgroundMusic(proTimeline.Music.Genre)
+	if proTimeline.Music.Enabled && cfg != nil {
+		mf, err := pc.bgMusic.GenerateMusic(proTimeline.Music.Genre, cfg)
 		if err != nil {
 			return nil, fmt.Errorf("bgm download failed: %v", err)
 		}
@@ -296,7 +245,6 @@ func (pc *ProCompiler) Compile(jsonSchemaBlob []byte, InputVideoPaths []string) 
 
 	// Execute FFmpeg and return video stream
 	return pc.Build(CommandBuildInput{
-		Metadata_FFmpeg:   meta,
 		Timeline:          proTimeline,
 		ImageorVideoPaths: InputVideoPaths,
 		Audio: AudioConfig{
@@ -312,8 +260,15 @@ func (pc *ProCompiler) Compile(jsonSchemaBlob []byte, InputVideoPaths []string) 
 }
 
 func (rc *ReelsCompiler) Build(in CommandBuildInput) (io.Reader, error) {
-	if in.Metadata_FFmpeg.Width <= 0 || in.Metadata_FFmpeg.Height <= 0 || in.Metadata_FFmpeg.FPS <= 0 {
-		return nil, fmt.Errorf("invalid metadata: width/height/fps must be > 0")
+	// Validate timeline metadata
+	if len(in.Timeline.Metadata.Resolution) != 2 {
+		return nil, fmt.Errorf("invalid resolution: expected [width, height], got %v", in.Timeline.Metadata.Resolution)
+	}
+	if in.Timeline.Metadata.Resolution[0] <= 0 || in.Timeline.Metadata.Resolution[1] <= 0 {
+		return nil, fmt.Errorf("invalid resolution: width and height must be > 0")
+	}
+	if in.Timeline.Metadata.Fps == "" {
+		return nil, fmt.Errorf("missing FPS in timeline metadata")
 	}
 	if in.FinalVideoPath == "" {
 		return nil, fmt.Errorf("missing output path")
@@ -408,8 +363,8 @@ func (rc *ReelsCompiler) Build(in CommandBuildInput) (io.Reader, error) {
 		// Use: scale, pad (if needed), fps, tpad=stop_mode=clone:stop_duration=duration, setpts=N/(FPS*TB)
 		// Use loop filter to make image into frames: loop=loop=FPS*duration:size=1:start=0, fps=FPS
 		// Use tpad to clone last frame to desired duration for still images, then normalize PTS
-		filter += fmt.Sprintf("%s scale=%d:%d:force_original_aspect_ratio=decrease,pad=%d:%d:(ow-iw)/2:(oh-ih)/2,format=yuv420p,fps=%d,tpad=stop_mode=clone:stop_duration=%f,setpts=PTS-STARTPTS %s;",
-			labelIn, in.Metadata_FFmpeg.Width, in.Metadata_FFmpeg.Height, in.Metadata_FFmpeg.Width, in.Metadata_FFmpeg.Height, in.Metadata_FFmpeg.FPS, float64(t.Duration), labelOut)
+		filter += fmt.Sprintf("%s scale=%d:%d:force_original_aspect_ratio=decrease,pad=%d:%d:(ow-iw)/2:(oh-ih)/2,format=yuv420p,fps=%s,tpad=stop_mode=clone:stop_duration=%f,setpts=PTS-STARTPTS %s;",
+			labelIn, in.Timeline.Metadata.Resolution[0], in.Timeline.Metadata.Resolution[1], in.Timeline.Metadata.Resolution[0], in.Timeline.Metadata.Resolution[1], in.Timeline.Metadata.Fps, float64(t.Duration), labelOut)
 		imageStreamCount++
 	}
 
@@ -438,7 +393,7 @@ func (rc *ReelsCompiler) Build(in CommandBuildInput) (io.Reader, error) {
 		}
 		text := escapeDrawtext(textsegments[textIdx].Text)
 		//textsegments[textIdx].Position
-		xy := positionXY("center-bottom", in.Metadata_FFmpeg.Width, in.Metadata_FFmpeg.Height)
+		xy := positionXY("center-bottom", in.Timeline.Metadata.Resolution[0], in.Timeline.Metadata.Resolution[1])
 		bg := ""
 		/*
 			if textsegments[textIdx].BackgroundColor != "" {
@@ -464,14 +419,14 @@ func (rc *ReelsCompiler) Build(in CommandBuildInput) (io.Reader, error) {
 	// Music stem
 	if musicIdx >= 0 {
 		mv := clamp01(in.Audio.MusicVolume)
-		filter += fmt.Sprintf("[%d:a]volume=%0.2f,atrim=0:%f,asetpts=PTS-STARTPTS[ma];", musicIdx, mv, float64(in.Metadata_FFmpeg.TotalDuration))
+		filter += fmt.Sprintf("[%d:a]volume=%0.2f,atrim=0:%f,asetpts=PTS-STARTPTS[ma];", musicIdx, mv, float64(in.Timeline.Metadata.TotalDuration))
 	}
 	// Narration stem
 	nv := in.Audio.NarrationVolume
 	if nv <= 0 {
 		nv = 1.0
 	}
-	filter += fmt.Sprintf("[%d:a]volume=%0.2f,apad,atrim=0:%f,asetpts=PTS-STARTPTS[na];", narrIdx, nv, float64(in.Metadata_FFmpeg.TotalDuration))
+	filter += fmt.Sprintf("[%d:a]volume=%0.2f,apad,atrim=0:%f,asetpts=PTS-STARTPTS[na];", narrIdx, nv, float64(in.Timeline.Metadata.TotalDuration))
 	// Mixed overlay track
 	var audioMaps []string
 	if musicIdx >= 0 {
@@ -496,8 +451,8 @@ func (rc *ReelsCompiler) Build(in CommandBuildInput) (io.Reader, error) {
 
 	// Output settings
 	args = append(args,
-		"-r", fmt.Sprintf("%d", in.Metadata_FFmpeg.FPS),
-		"-s", fmt.Sprintf("%dx%d", in.Metadata_FFmpeg.Width, in.Metadata_FFmpeg.Height),
+		"-r", in.Timeline.Metadata.Fps,
+		"-s", fmt.Sprintf("%dx%d", in.Timeline.Metadata.Resolution[0], in.Timeline.Metadata.Resolution[1]),
 		"-c:v", "libx264",
 		"-pix_fmt", "yuv420p",
 		"-preset", "fast",
@@ -507,29 +462,47 @@ func (rc *ReelsCompiler) Build(in CommandBuildInput) (io.Reader, error) {
 		args = append(args, "-c:a", "aac")
 	}
 
-	// Execute FFmpeg and return stdout as Reader
+	// Add output file to args
+	args = append(args, in.FinalVideoPath)
+
+	// Execute FFmpeg and wait for completion
 	cmd := exec.Command("ffmpeg", args...)
 	cmd.Stderr = os.Stderr
-	stdout, err := cmd.StdoutPipe()
+
+	// Run FFmpeg and wait for completion
+	if err := cmd.Run(); err != nil {
+		return nil, fmt.Errorf("ffmpeg execution failed: %v", err)
+	}
+
+	// Read the generated file and return as Reader
+	file, err := os.Open(in.FinalVideoPath)
 	if err != nil {
-		return nil, fmt.Errorf("failed to create stdout pipe: %v", err)
+		return nil, fmt.Errorf("failed to open output file: %v", err)
 	}
 
-	if err := cmd.Start(); err != nil {
-		return nil, fmt.Errorf("failed to start ffmpeg: %v", err)
-	}
-
-	// Return the stdout pipe as a Reader
-	return stdout, nil
+	return file, nil
 }
 
 // Reels Compiler and Compile both have
 // Compile implements VideoCompiler interface for ReelsCompiler
 
 func (pc *ProCompiler) Build(in CommandBuildInput) (io.Reader, error) {
-	var finalVideo []byte
 	// TODO: Implement Pro-specific FFmpeg args and execution
 	// For now, delegate to ReelsCompiler logic
+
+	// Validate timeline metadata
+	if len(in.Timeline.Metadata.Resolution) != 2 {
+		return nil, fmt.Errorf("invalid resolution: expected [width, height], got %v", in.Timeline.Metadata.Resolution)
+	}
+	if in.Timeline.Metadata.Resolution[0] <= 0 || in.Timeline.Metadata.Resolution[1] <= 0 {
+		return nil, fmt.Errorf("invalid resolution: width and height must be > 0")
+	}
+	if in.Timeline.Metadata.Fps == "" {
+		return nil, fmt.Errorf("missing FPS in timeline metadata")
+	}
+	if in.FinalVideoPath == "" {
+		return nil, fmt.Errorf("missing output path")
+	}
 
 	//puuting as input image/video paths, tts narration, and music
 	//perhaps need to arrange inputs in specific order? Regardless need
@@ -545,6 +518,66 @@ func (pc *ProCompiler) Build(in CommandBuildInput) (io.Reader, error) {
 		args = append(args, "-i", in.Audio.MusicPath.MusicPath)
 	}
 
+	// Build filter complex to combine video and audio
+	filter := ""
+	finalVideoLabel := ""
+	var audioMaps []string
+
+	// Video processing: concatenate multiple videos/images sequentially
+	if len(in.ImageorVideoPaths) > 0 {
+		// Scale all videos to the target resolution from timeline metadata
+		width := in.Timeline.Metadata.Resolution[0]
+		height := in.Timeline.Metadata.Resolution[1]
+
+		// Create scale filters for each video input
+		for i := 0; i < len(in.ImageorVideoPaths); i++ {
+			filter += fmt.Sprintf("[%d:v]scale=%d:%d:force_original_aspect_ratio=decrease,pad=%d:%d:(ow-iw)/2:(oh-ih)/2:black[v%d];",
+				i, width, height, width, height, i)
+		}
+
+		// Concatenate all videos sequentially
+		if len(in.ImageorVideoPaths) == 1 {
+			finalVideoLabel = "[v0]"
+		} else {
+			// Create concat filter for multiple videos
+			concatInputs := ""
+			for i := 0; i < len(in.ImageorVideoPaths); i++ {
+				concatInputs += fmt.Sprintf("[v%d]", i)
+			}
+			filter += concatInputs + fmt.Sprintf("concat=n=%d:v=1:a=0[video];", len(in.ImageorVideoPaths))
+			finalVideoLabel = "[video]"
+		}
+	}
+
+	// Audio processing: mix narration and background music
+	audioInputCount := 0
+	if len(in.Audio.ttsNarrationPaths.FilePath) > 0 {
+		audioInputCount++
+	}
+	if in.Audio.MusicEnabled && in.Audio.MusicPath.MusicPath != "" {
+		audioInputCount++
+	}
+
+	if audioInputCount > 0 {
+		// Calculate which input index has the first audio
+		firstAudioIdx := len(in.ImageorVideoPaths)
+
+		if audioInputCount == 1 {
+			// Single audio source
+			filter += fmt.Sprintf("[%d:a]volume=0.8[audio];", firstAudioIdx)
+			audioMaps = []string{"[audio]"}
+		} else {
+			// Multiple audio sources - mix narration and music
+			narrationIdx := firstAudioIdx
+			musicIdx := firstAudioIdx + len(in.Audio.ttsNarrationPaths.FilePath)
+
+			filter += fmt.Sprintf("[%d:a]volume=0.8[narration];", narrationIdx)
+			filter += fmt.Sprintf("[%d:a]volume=0.3[music];", musicIdx)
+			filter += "[narration][music]amix=inputs=2:duration=longest:dropout_transition=2[audio];"
+			audioMaps = []string{"[audio]"}
+		}
+	}
+
 	//filter complex logic (don't fully understand what this is)
 	args = append(args, "-filter_complex", filter, "-map", finalVideoLabel)
 	if len(audioMaps) > 0 {
@@ -557,17 +590,41 @@ func (pc *ProCompiler) Build(in CommandBuildInput) (io.Reader, error) {
 
 	//where do I combine the audio and video streams? When do I apply the 'filters'?
 	//what other logic can I add to this
-	//I know this is stupid, but let's go with the safe option for now
-	err := os.WriteFile(in.FinalVideoPath, finalVideo, 0644)
-	if err != nil {
-		return nil, fmt.Errorf("failed to write final video: %v", err)
-	}
-	sameVideoFileReadFromDisk, err := os.ReadFile(in.FinalVideoPath)
-	if err != nil {
-		return nil, fmt.Errorf("failed to read final video: %v", err)
-	}
-	return bytes.NewReader(sameVideoFileReadFromDisk), nil
 
+	//final output args
+	args = append(args,
+		"-c:v", "libx264", // Video codec
+		"-preset", "fast", // Encoding speed vs quality tradeoff
+		"-tune", "zerolatency", // Optimize for low latency streaming
+		"-crf", "23", // Quality (18-28 range, 23 is good default)
+		"-pix_fmt", "yuv420p", // Pixel format for broad compatibility
+		"-movflags", "+faststart", // Optimize for streaming (metadata at start)
+		"-r", in.Timeline.Metadata.Fps, // Frame rate from timeline
+		"-c:a", "aac", // Audio codec
+		"-b:a", "128k", // Audio bitrate
+		"-ar", "44100", // Audio sample rate
+		"-ac", "2", // Stereo audio
+	)
+
+	// Add output file to args
+	args = append(args, in.FinalVideoPath)
+
+	// Execute FFmpeg and wait for completion
+	cmd := exec.Command("ffmpeg", args...)
+	cmd.Stderr = os.Stderr
+
+	// Run FFmpeg and wait for completion
+	if err := cmd.Run(); err != nil {
+		return nil, fmt.Errorf("ffmpeg execution failed: %v", err)
+	}
+
+	// Read the generated file and return as Reader
+	file, err := os.Open(in.FinalVideoPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open output file: %v", err)
+	}
+
+	return file, nil
 }
 
 /*

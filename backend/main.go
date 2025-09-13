@@ -4,6 +4,8 @@ import (
 	"log"
 	"social-media-ai-video/config"
 	"social-media-ai-video/handlers"
+	"social-media-ai-video/models/interfaces"
+	"social-media-ai-video/services"
 
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
@@ -55,7 +57,12 @@ func main() {
 	}))
 
 	// Initialize handlers
-	videoHandler := handlers.NewVideoHandler(cfg)
+	videoHandler := handlers.NewVideoHandler(
+		cfg,
+		interfaces.VoiceOver(services.NewElevenLabsService(cfg)),
+		interfaces.MusicGeneration(services.NewBackgroundMusic(cfg)),
+		interfaces.VideoGeneration(services.NewVeoService(cfg)),
+	)
 
 	// API routes
 	api := r.Group("/api")
@@ -66,7 +73,7 @@ func main() {
 		api.POST("/generate-video-timeline", videoHandler.GenerateVideoTimeline)
 		//add requireAPIKey middleware later
 		//api.GET("/composition", videoHandler.GetComposition)
-		api.GET("/sse", videoHandler.SSEStream)
+		api.GET("/sse/video_request/:client_id", videoHandler.SSEVideoRequest)
 	}
 
 	// Serve static files from ./tmp at /static

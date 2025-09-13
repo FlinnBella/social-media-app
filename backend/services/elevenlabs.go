@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"social-media-ai-video/config"
 	"social-media-ai-video/models"
+	"social-media-ai-video/utils"
 	"strings"
 )
 
@@ -34,7 +35,7 @@ const (
 // GenerateSpeechToTmp generates TTS audio and writes it under tmpDir.
 // Returns a FileOutput containing the file path, filename, and temp directory.
 // generates a set of audio files, used for concatenated in ffmpeg
-func (els *ElevenLabsService) GenerateSpeechToTmp(text []string) (*models.FileOutput, error) {
+func (els *ElevenLabsService) GenerateVoiceOver(text []string, cfg *config.APIConfig) (*models.FileOutput, error) {
 	// Buffer for text-to-speech parts
 
 	//exact outpath paths into TmpDir
@@ -77,8 +78,10 @@ func (els *ElevenLabsService) GenerateSpeechToTmp(text []string) (*models.FileOu
 	/*
 		Creating TmpDir and adding file
 	*/
-	tmpDir, err := os.MkdirTemp("", "elevenlabs_voice-*")
-	if err != nil {
+	// Create unique request directory
+	requestID := utils.GenerateUniqueID()
+	tmpDir := filepath.Join("./tmp", "elevenlabs", requestID)
+	if err := os.MkdirAll(tmpDir, 0755); err != nil {
 		return nil, fmt.Errorf("failed to create temp dir: %v", err)
 	}
 	file := filepath.Join(tmpDir, "elevenlabs_voice.mp3")

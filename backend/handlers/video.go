@@ -14,6 +14,7 @@ import (
 
 	"social-media-ai-video/config"
 	"social-media-ai-video/models"
+	"social-media-ai-video/models/interfaces"
 	"social-media-ai-video/services"
 
 	"github.com/gin-gonic/gin"
@@ -26,26 +27,27 @@ type VideoHandler struct {
 	proCompiler   services.VideoCompiler
 	// Services used directly by handlers (not through compilers)
 
-	N8NService *services.N8NService
-	veo        *services.VeoService
+	N8NService      *services.N8NService
+	veo             interfaces.VideoGeneration
+	voiceOver       interfaces.VoiceOver
+	musicGeneration interfaces.MusicGeneration
 
 	// SSE client management
 	clients      map[string]chan gin.H
 	clientsMutex sync.RWMutex
 }
 
-func NewVideoHandler(cfg *config.APIConfig) *VideoHandler {
-	// Create shared services
-	bgMusic := services.NewBackgroundMusic(cfg)
-	elevenLabs := services.NewElevenLabsService(cfg)
+func NewVideoHandler(cfg *config.APIConfig, voiceOver interfaces.VoiceOver, musicGeneration interfaces.MusicGeneration, videoGeneration interfaces.VideoGeneration) *VideoHandler {
 
 	return &VideoHandler{
 		//api's
-		cfg: cfg,
+		cfg:             cfg,
+		voiceOver:       voiceOver,
+		musicGeneration: musicGeneration,
 
 		// Compilers with their own builders and shared services
-		reelsCompiler: services.NewReelsCompiler(bgMusic, elevenLabs),
-		proCompiler:   services.NewProCompiler(bgMusic, elevenLabs),
+		reelsCompiler: services.NewReelsCompiler(musicGeneration, voiceOver),
+		proCompiler:   services.NewProCompiler(musicGeneration, voiceOver),
 
 		//Actually used to generate schema; should
 		//eventually pass it n8n service as a method,
@@ -55,7 +57,7 @@ func NewVideoHandler(cfg *config.APIConfig) *VideoHandler {
 		N8NService: services.NewN8NService(cfg),
 
 		//veo to geenrate videos, fed into compilier
-		veo: services.NewVeoService(cfg),
+		veo: videoGeneration,
 
 		// Initialize SSE client management
 		clients: make(map[string]chan gin.H),
@@ -97,6 +99,10 @@ func (vh *VideoHandler) GenerateVideoTimeline(c *gin.Context) {
 		return
 	}
 	// GUARDS END
+
+	//sanity check
+	//parsed from looked good to me
+	//sanity check end
 
 	targetURL := vh.cfg.N8BTIMELINEURL
 	resp, err := vh.N8NService.Get(c, targetURL)
@@ -193,7 +199,7 @@ func (vh *VideoHandler) GenerateProReels(c *gin.Context) {
 
 	// Compile with AI schema blob and local image paths using PRO compiler
 	// Compiler handles its own intermediate file cleanup and FFmpeg execution
-	videoStream, err := vh.proCompiler.Compile([]byte(schema), localImagePaths)
+	videoStream, err := vh.proCompiler.Compile([]byte(schema), localImagePaths, vh.cfg)
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{"status": "error", "error": err.Error()})
 		return
@@ -307,7 +313,7 @@ func (vh *VideoHandler) GenerateVideoReels(c *gin.Context) {
 
 	// Compile with AI schema blob and local image paths using reels compiler
 	// Compiler handles its own intermediate file cleanup and FFmpeg execution
-	videoStream, err := vh.reelsCompiler.Compile([]byte(schema), localImagePaths)
+	videoStream, err := vh.reelsCompiler.Compile([]byte(schema), localImagePaths, vh.cfg)
 	if err != nil {
 		// Send error update if client is connected
 		if clientID != "" {
@@ -366,16 +372,15 @@ func (vh *VideoHandler) GenerateVideoReels(c *gin.Context) {
 
 }
 
-// AddClient adds a new SSE client and returns a unique client ID
-func (vh *VideoHandler) AddClient() (string, chan gin.H) {
-	clientID := fmt.Sprintf("client_%d", time.Now().UnixNano())
+// AddClient adds a new SSE client with the provided client ID
+func (vh *VideoHandler) AddClient(clientID string) chan gin.H {
 	clientChan := make(chan gin.H, 10) // Buffered channel for non-blocking sends
 
 	vh.clientsMutex.Lock()
 	vh.clients[clientID] = clientChan
 	vh.clientsMutex.Unlock()
 
-	return clientID, clientChan
+	return clientChan
 }
 
 // RemoveClient removes a client from the SSE client list
@@ -405,32 +410,16 @@ func (vh *VideoHandler) SendToClient(clientID string, eventType string, data gin
 	}
 }
 
-// SendToAllClients broadcasts a message to all connected clients
-func (vh *VideoHandler) SendToAllClients(eventType string, data gin.H) {
-	vh.clientsMutex.RLock()
-	defer vh.clientsMutex.RUnlock()
-
-	message := gin.H{"type": eventType, "data": data}
-	for clientID, clientChan := range vh.clients {
-		select {
-		case clientChan <- message:
-			// Message sent successfully
-		default:
-			// Channel is full, skip this client
-			// Could remove the client here if it's consistently slow
-		}
-	}
-}
-
 /*
 SSEStream to send small, event based updates to the client
-Now supports client-specific messaging via client ID parameter
+Uses client ID from frontend request for client-specific messaging
 */
-func (vh *VideoHandler) SSEStream(c *gin.Context) {
-	// Get or generate client ID
+func (vh *VideoHandler) SSEVideoRequest(c *gin.Context) {
+	// Get client ID from frontend request
 	clientID := c.Query("client_id")
 	if clientID == "" {
-		clientID = fmt.Sprintf("client_%d", time.Now().UnixNano())
+		c.JSON(400, gin.H{"error": "client_id query parameter is required"})
+		return
 	}
 
 	c.Header("Content-Type", "text/event-stream")
@@ -439,8 +428,8 @@ func (vh *VideoHandler) SSEStream(c *gin.Context) {
 	c.Header("Access-Control-Allow-Origin", "*")
 
 	// Add this client to our client list
-	generatedClientID, clientChan := vh.AddClient()
-	defer vh.RemoveClient(generatedClientID)
+	clientChan := vh.AddClient(clientID)
+	defer vh.RemoveClient(clientID)
 
 	// Send initial connection event with client ID
 	c.SSEvent("connected", gin.H{

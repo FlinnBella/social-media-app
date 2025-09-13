@@ -9,7 +9,7 @@ import { PROMPT_TYPES } from './prompttypes';
 interface PromptTemplateContainerProps {
     templates: PromptCard[];
     prompt: string; 
-    onApply: (prompt: string, promptType: keyof typeof PROMPT_TYPES) => void;
+    onApply: (promptType: keyof typeof PROMPT_TYPES) => void;
 }
 
 /*

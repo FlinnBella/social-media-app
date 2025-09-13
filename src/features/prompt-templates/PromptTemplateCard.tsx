@@ -4,14 +4,14 @@ import { PromptCard } from './prompttypes';
 import React from 'react';
 
 interface PromptTemplateCardProps {
-    onApply: (prompt: string, promptType: keyof typeof PROMPT_TYPES) => void;
+    onApply: (promptType: keyof typeof PROMPT_TYPES) => void;
     template: PromptCard;
     prompt: string;
 }
 
-export const PromptTemplateCard = React.memo(({ template, prompt, onApply }: PromptTemplateCardProps) => {
+export const PromptTemplateCard = React.memo(({ template, onApply }: PromptTemplateCardProps) => {
     const handleClick = () => {
-        onApply(prompt, template.promptType);
+        onApply(template.promptType);
     }
     //need to add an onclick functionality to the cards
     return (

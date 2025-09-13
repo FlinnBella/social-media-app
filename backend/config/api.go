@@ -24,14 +24,14 @@ func LoadAPIConfig() *APIConfig {
 	// Base URLs (can be overridden below)
 	N8NPLEXELSURL := getEnvOrDefault("N8N_PLEXELS_URL", "https://evandickinson.app.n8n.cloud/webhook/pexels-workflow")
 	N8NREELSURL := getEnvOrDefault("N8N_REELS_URL", "https://evandickinson.app.n8n.cloud/webhook/ffmpeg-content-reels")
-	N8BTIMELINEURL := getEnvOrDefault("N8N_TIMELINE_URL", "https://evandickinson.app.n8n.cloud/webhook/timeline-workflow")
+	N8BTIMELINEURL := getEnvOrDefault("N8N_TIMELINE_URL", "https://evandickinson.app.n8n.cloud/webhook/dGltZWxpbmU-timeline-workflow")
 	/*
 		Note that the test webhooks seem to occasionally not work
 	*/
 	if env == "development" {
 		N8NPLEXELSURL = getEnvOrDefault("N8N_PLEXELS_URL", "https://evandickinson.app.n8n.cloud/webhook-test/pexels-workflow")
 		N8NREELSURL = getEnvOrDefault("N8N_REELS_URL", "https://evandickinson.app.n8n.cloud/webhook-test/ffmpeg-content-reels")
-		N8BTIMELINEURL = getEnvOrDefault("N8N_TIMELINE_URL", "https://evandickinson.app.n8n.cloud/webhook-test/timeline-workflow")
+		N8BTIMELINEURL = getEnvOrDefault("N8N_TIMELINE_URL", "https://evandickinson.app.n8n.cloud/webhook-test/dGltZWxpbmU-timeline-workflow")
 	}
 
 	return &APIConfig{

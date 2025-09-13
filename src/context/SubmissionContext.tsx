@@ -7,7 +7,7 @@ import type { ApiEndpointKey } from '@/cfg';
 import { API_ENDPOINTS } from '@/cfg';
 import type { TimelineCompositionResponse, Timeline as TimelineType } from '#types/timeline';
 import { ZTimelineCompositionResponse } from '#types/timeline';
-import { useSSEContext } from './VideoProgressContext';
+
 
 /*
 Sources of errors perhaps emerge with the types here;
@@ -53,7 +53,7 @@ export const SubmissionProvider: React.FC<React.PropsWithChildren> = ({ children
   const [timelineComposition, setTimelineComposition] = useState<TimelineCompositionResponse | null>(null);
   
   // SSE context for real-time updates
-  const sse = useSSEContext();
+  
 
   const submitTimeline = useCallback(async (prompt: string, images: File[]) => {
     if (!prompt || !prompt.trim()) {
@@ -78,12 +78,19 @@ export const SubmissionProvider: React.FC<React.PropsWithChildren> = ({ children
     try {
       const formData = new FormData();
       formData.append('prompt', prompt);
-      for (const file of images) {
-        formData.append('image', file, file.name);
+      
+      // Add error handling for file appending
+      for (let i = 0; i < images.length; i++) {
+        const file = images[i];
+        try {
+          formData.append('image', file, file.name);
+        } catch (error) {
+          console.error(`Error adding file ${i}:`, error);
+          throw new Error(`Failed to add file ${file.name}: ${error}`);
+        }
       }
-      const path = API_ENDPOINTS['generateVideoTimeline'];
-      const dev_url = `http://localhost:8080${path}`;
-      const resp = await useMultiPartFormData(formData, MULTIPART_ACTIONS.SendImageTimeline, dev_url);
+      
+      const resp = await useMultiPartFormData(formData, MULTIPART_ACTIONS.SendImageTimeline);
       // When the timeline API responds, update timeline state and assistant message
       // Adapt to the actual response shape when backend finalizes
 
@@ -152,7 +159,7 @@ export const SubmissionProvider: React.FC<React.PropsWithChildren> = ({ children
     setIsLoading(true);
     
     // Start SSE connection for progress tracking
-    sse.connect('http://localhost:8080/api/sse');
+    
     
     try {
 
@@ -179,7 +186,7 @@ free ffmpeg or veo3, based on the button params; we'll give it a second however,
 for now
 */
       // Use clientId from SSE context if not provided
-      const effectiveClientId = clientId || sse.connection.clientId;
+      const effectiveClientId = clientId;
       const resp = await useMultiPartFormData(formData, MULTIPART_ACTIONS.finalVideo, apiKey, effectiveClientId);
       
       // Guard: Check if response is an error or null
@@ -228,9 +235,9 @@ for now
     } finally {
       setIsLoading(false);
       // Stop SSE connection
-      sse.disconnect();
+      
     }
-  }, [sse]);
+  }, []);
 
   const value = useMemo<SubmissionContextValue>(() => ({
     isLoading,

@@ -20,14 +20,12 @@ import { PROMPT_TYPES } from "@/features/prompt-templates/prompttypes";
 
 //types
 import type { Timeline as TimelineType } from "#types/timeline";
-import { usePrompt } from "./features/prompt-templates/usePrompt";
+import { useChooseTemplatePrompt } from "./features/prompt-templates/usePrompt";
 import { useUserState } from "@/context/UserContext";
 // MakeTypeFieldsRequired not used in this file
 
 import { PromptTemplateContainer } from "./features/prompt-templates/PromptTemplateContainer";
 import { PromptCards, PromptCard } from "./features/prompt-templates/prompttypes";
-import { VideoProgressBar } from "./features/video-progress";
-import { useVideoProgress } from "./hooks/useVideoProgress";
 
 // Message type handled via SubmissionContext
 
@@ -42,7 +40,6 @@ function App() {
   const [hasSubmittedTimeline, setHasSubmittedTimeline] = useState(false);
   
   // Video progress hook for SSE
-  const videoProgress = useVideoProgress();
 
   const { textareaRef, adjustHeight } = useAutoResizeTextarea({
     minHeight: 72,
@@ -72,10 +69,9 @@ function App() {
  /*
 CALLBACKS START
 */
-const onApplyNewPrompt = useCallback((nextText: string, promptType: keyof typeof PROMPT_TYPES) => {
-  const transformed = usePrompt(nextText || inputText, promptType);
-  const updated = inputText ? `${inputText}\n${transformed}` : transformed;
-  setInputText(updated);
+const handlePromptApply = useCallback((promptType: keyof typeof PROMPT_TYPES) => {
+  const transformed = useChooseTemplatePrompt(inputText, promptType);
+  setInputText(transformed);
 }, [inputText, setInputText]);
 
 /*
@@ -112,7 +108,7 @@ CALLBACKS END
 
         {/* Prompt Templates */}
         <div>
-        <PromptTemplateContainer templates={PromptCards as PromptCard[]} prompt={inputText} onApply={onApplyNewPrompt} />
+        <PromptTemplateContainer templates={PromptCards as PromptCard[]} prompt={inputText} onApply={handlePromptApply} />
         </div>
 
         {/* AI Prompt Interface */}
@@ -260,13 +256,6 @@ CALLBACKS END
               </div>
             </div>
           </div>
-
-          {/* Video Progress Bar */}
-          <VideoProgressBar
-            progress={videoProgress.progress}
-            error={videoProgress.error}
-            isVisible={videoProgress.isVisible || isLoading}
-          />
         </div>
 
         {/* Social Media Links - Show after video generation */}

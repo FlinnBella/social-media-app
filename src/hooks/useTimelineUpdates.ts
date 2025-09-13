@@ -1,5 +1,5 @@
 import { useMemo } from 'react';
-import { useSSEContext } from '@/context/VideoProgressContext';
+import { useSSEContext } from '@/context/SSEContext';
 
 export const useTimelineUpdates = () => {
   const sse = useSSEContext();

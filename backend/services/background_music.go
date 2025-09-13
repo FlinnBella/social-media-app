@@ -4,6 +4,7 @@ import (
 	"social-media-ai-video/config"
 	"social-media-ai-video/models"
 	"social-media-ai-video/services/internal"
+	"social-media-ai-video/utils"
 
 	"fmt"
 	"math/rand"
@@ -25,7 +26,7 @@ func NewBackgroundMusic(cfg *config.APIConfig) *BackgroundMusic {
 }
 
 // CreateBackgroundMusic selects a random track from the specified genre and trims it to 30 seconds
-func (b *BackgroundMusic) CreateBackgroundMusic(genre string) (*models.FileOutput, error) {
+func (b *BackgroundMusic) GenerateMusic(genre string, cfg *config.APIConfig) (*models.FileOutput, error) {
 	if genre == "" {
 		return nil, fmt.Errorf("empty mood/genre")
 	}
@@ -44,9 +45,10 @@ func (b *BackgroundMusic) CreateBackgroundMusic(genre string) (*models.FileOutpu
 	rand.Seed(time.Now().UnixNano())
 	selectedTrack := tracks[rand.Intn(len(tracks))]
 
-	// Create temp directory
-	tmpDir, err := os.MkdirTemp("", "background_music-*")
-	if err != nil {
+	// Create unique request directory
+	requestID := utils.GenerateUniqueID()
+	tmpDir := filepath.Join("./tmp", "background_music", requestID)
+	if err := os.MkdirAll(tmpDir, 0755); err != nil {
 		return nil, fmt.Errorf("failed to create temp dir: %v", err)
 	}
 

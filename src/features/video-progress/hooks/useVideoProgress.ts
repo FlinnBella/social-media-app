@@ -1,21 +1,21 @@
 import React, { useState, useCallback, useRef, useEffect } from 'react';
-import type { VideoProgressData, VideoErrorData } from '../components/VideoProgressBar';
+import type { VideoErrorData } from '../components/VideoProgressBar';
+import { SSE_ENDPOINTS } from '@/cfg';
+
 
 interface UseVideoProgressOptions {
   sseUrl: string;
-  onComplete?: () => void;
-  onError?: (error: VideoErrorData) => void;
 }
 
-export const useVideoProgress = ({ sseUrl, onComplete, onError }: UseVideoProgressOptions) => {
-  const [progress, setProgress] = useState<VideoProgressData | null>(null);
+export const useVideoProgress = ({ sseUrl = SSE_ENDPOINTS.serverSSEUpdates}: UseVideoProgressOptions) => {
+  const [progressEvents, setProgressEvents] = useState<{stage: string, progress: number}>({stage: 'processing', progress: 0});
   const [error, setError] = useState<VideoErrorData | null>(null);
   const [isVisible, setIsVisible] = useState(false);
   const [clientId, setClientId] = useState<string | null>(null);
   const [isConnected, setIsConnected] = useState(false);
   
   const eventSourceRef = useRef<EventSource | null>(null);
-  const progressTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const progressTimeoutRef = useRef<number | null>(null);
 
   const connectSSE = useCallback(() => {
     if (eventSourceRef.current) {
@@ -30,13 +30,22 @@ export const useVideoProgress = ({ sseUrl, onComplete, onError }: UseVideoProgre
 
     const onConnected = (event: MessageEvent) => {
       const data = JSON.parse(event.data);
-      setClientId(data.client_id);
+      //guard to verify client id is preserved
+      if (data.client_id !== clientId) {
+        console.error("Client ID mismatch:", data.client_id, clientId);
+        setError({
+          error: 'Client ID mismatch. Please try again.',
+          stage: 'client_id_mismatch'
+        });
+        setIsConnected(false);
+        return;
+      }
       setIsConnected(true);
     };
 
     const onVideoProgress = (event: MessageEvent) => {
       const data = JSON.parse(event.data);
-      setProgress(data);
+      setProgressEvents(data);
       setError(null);
       
       // Auto-hide progress bar after completion
@@ -46,7 +55,6 @@ export const useVideoProgress = ({ sseUrl, onComplete, onError }: UseVideoProgre
         }
         progressTimeoutRef.current = setTimeout(() => {
           setIsVisible(false);
-          onComplete?.();
         }, 3000); // Hide after 3 seconds
       }
     };
@@ -54,7 +62,7 @@ export const useVideoProgress = ({ sseUrl, onComplete, onError }: UseVideoProgre
     const onVideoError = (event: MessageEvent) => {
       const data = JSON.parse(event.data);
       setError(data);
-      setProgress(null);
+      setProgressEvents({stage: 'error', progress: 0});
       onError?.(data);
     };
 
@@ -81,10 +89,10 @@ export const useVideoProgress = ({ sseUrl, onComplete, onError }: UseVideoProgre
       eventSourceRef.current = null;
       setIsConnected(false);
     };
-  }, [sseUrl, onComplete, onError]);
+  }, [sseUrl]);
 
   const startProgress = useCallback(() => {
-    setProgress({ stage: 'processing', message: 'Starting video generation...', progress: 0 });
+    setProgressEvents({stage: 'processing', progress: 0});
     setError(null);
     setIsVisible(true);
     
@@ -94,7 +102,7 @@ export const useVideoProgress = ({ sseUrl, onComplete, onError }: UseVideoProgre
 
   const stopProgress = useCallback(() => {
     setIsVisible(false);
-    setProgress(null);
+    setProgressEvents({stage: 'processing', progress: 0});
     setError(null);
     setClientId(null);
     
@@ -107,7 +115,7 @@ export const useVideoProgress = ({ sseUrl, onComplete, onError }: UseVideoProgre
   }, []);
 
   const resetProgress = useCallback(() => {
-    setProgress(null);
+    setProgressEvents({stage: 'processing', progress: 0});
     setError(null);
     setIsVisible(false);
   }, []);
@@ -125,7 +133,7 @@ export const useVideoProgress = ({ sseUrl, onComplete, onError }: UseVideoProgre
   }, []);
 
   return {
-    progress,
+    progressEvents,
     error,
     isVisible,
     clientId,

@@ -19,7 +19,7 @@ SSE ENDPOINTS
 */
 
 export const SSE_ENDPOINTS = {
-    serverSSE: '/api/sse',
+    serverSSEUpdates: '/api/sse/video_update',
 } as const;
 
 export type SseEndpointKey = keyof typeof SSE_ENDPOINTS;

@@ -6,7 +6,9 @@ import { Timeline } from '@/components/VideoScreen/imagegenui/timeline-visualize
 import { useSubmission } from '@/context/SubmissionContext';
 import type { VideoResponse } from '#types/multipart';
 // removed unused types
-
+import { VideoProgressBar } from '@/features/video-progress';
+import { useVideoProgress } from '@/features/video-progress/hooks/useVideoProgress';
+import { SSE_ENDPOINTS } from '@/cfg';
 interface TimelineVideoContainerProps {
     timeline: TimelineType | null;
     isMobile: boolean;
@@ -24,13 +26,19 @@ interface RenderVideoProps {
 type Props = TimelineVideoContainerProps & Partial<RenderVideoProps>;
 
 export const VideoContainer: React.FC<Props> = ({ timeline, isMobile, prompt, images, previewUrls } : Props) => {
-    const { video, requestVideo } = useSubmission();
+    const { video } = useSubmission();
+    const sseUrl = SSE_ENDPOINTS.serverSSEUpdates;
+    const videoProgress = useVideoProgress({ sseUrl });
     //shoudl be binary being streamed to the client; 
     return (
         <div className={cn(
             "bg-gray-900 rounded-2xl p-4 shadow-2xl",
             isMobile ? "w-full max-w-sm" : "w-full max-w-4xl"
-        )}>
+        )}>          {/* Video Progress Bar */}
+        <VideoProgressBar
+          isVisible={videoProgress.isVisible}
+          progressEvents={videoProgress.progressEvents}
+        />
             <div className={cn(
                 "bg-black rounded-xl relative overflow-hidden",
                 isMobile ? "aspect-[9/16] max-h-[600px]" : "aspect-video h-[400px]"

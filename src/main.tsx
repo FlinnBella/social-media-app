@@ -8,7 +8,6 @@ import './index.css';
 import { Toaster } from 'sonner';
 import { SubmissionProvider } from '@/context/SubmissionContext';
 import { UserStateProvider } from '@/context/UserContext';
-import { SSEProvider } from '@/context/VideoProgressContext';
 import { ErrorBoundary } from 'react-error-boundary';
 import ErrorFallback from '@/components/Error/ErrorFallback.tsx';
 
@@ -25,11 +24,9 @@ createRoot(document.getElementById('root')!).render(
       }}
     >
       <UserStateProvider>
-        <SSEProvider>
           <SubmissionProvider>
             <App />
           </SubmissionProvider>
-        </SSEProvider>
       </UserStateProvider>
     </ErrorBoundary>
     <Toaster />

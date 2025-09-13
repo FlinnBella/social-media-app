@@ -1,11 +1,6 @@
 import React from 'react';
 import { cn } from '@/lib/utils';
 
-export interface VideoProgressData {
-  stage: string;
-  message: string;
-  progress: number;
-}
 
 export interface VideoErrorData {
   error: string;
@@ -13,7 +8,7 @@ export interface VideoErrorData {
 }
 
 interface VideoProgressBarProps {
-  progress?: VideoProgressData | null;
+  progressEvents: {stage: string, progress: number};
   error?: VideoErrorData | null;
   isVisible: boolean;
   className?: string;
@@ -53,19 +48,19 @@ const getStageMessage = (stage: string) => {
 };
 
 export const VideoProgressBar: React.FC<VideoProgressBarProps> = ({
-  progress,
+  progressEvents,
   error,
   isVisible,
   className
 }) => {
   if (!isVisible) return null;
 
-  const displayProgress = progress || { stage: 'processing', message: 'Starting...', progress: 0 };
+  const displayProgress = progressEvents || { stage: 'processing', progress: 0 };
   const displayError = error;
   
   const progressValue = Math.max(0, Math.min(100, displayProgress.progress));
   const stageColor = getStageColor(displayProgress.stage);
-  const stageMessage = displayError ? displayError.error : (displayProgress.message || getStageMessage(displayProgress.stage));
+  const stageMessage = displayError ? displayError.error : getStageMessage(displayProgress.stage);
 
   return (
     <div className={cn(
